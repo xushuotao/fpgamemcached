@@ -15,15 +15,23 @@ import ServerIndicationProxy::*;
 import ServerRequestWrapper::*;
 
 // defined by user
+//import ProtocolHeader::*;
 import MemcachedServer::*;
+
+import DDR3Sim::*;
+import DRAMController::*;
 
 typedef enum {ServerIndication, ServerRequest} IfcNames deriving (Eq,Bits);
 
 module mkPortalTop(StdPortalTop#(addrWidth));
+   
+   let ddr3_ctrl_user <- mkDDR3Simulator;
+   
+   let dram <- mkDRAMController(ddr3_ctrl_user);
 
    // instantiate user portals
    ServerIndicationProxy serverIndicationProxy <- mkServerIndicationProxy(ServerIndication);
-   ServerRequest serverRequest <- mkServerRequest(serverIndicationProxy.ifc);
+   ServerRequest serverRequest <- mkServerRequest(serverIndicationProxy.ifc, dram);
    ServerRequestWrapper serverRequestWrapper <- mkServerRequestWrapper(ServerRequest,serverRequest);
    
    Vector#(2,StdPortal) portals;
