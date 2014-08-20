@@ -61,14 +61,15 @@ module mkDRAMController#(DDR3_User_VC707 user) (DRAMControllerIfc);
 		let ii = readReqQ.first;
 		Bit#(64) addr = tpl_1(ii);
 		Bit#(7) bytes = tpl_2(ii);
-		Bit#(64) mask = case (bytes) 
+	/*	Bit#(64) mask = case (bytes) 
 			1: 64'b1;
 			2: 64'b11;
 			4: 64'b1111;
 			8: 64'b11111111;
 			64: ~64'h0;
 			default: 0;
-			endcase;
+			endcase;*/
+           Bit#(64) mask = (1 << bytes) - 1;
 
 		let rowidx = addr>>6; // 64 bytes per row
 		let offset = addr & extend(6'b111111);
@@ -169,14 +170,15 @@ module mkDRAMController#(DDR3_User_VC707 user) (DRAMControllerIfc);
 		Bit#(64) addr = tpl_1(di);
 		Bit#(512) data = tpl_2(di);
 		Bit#(7) bytes = tpl_3(di);
-		Bit#(64) mask = case (bytes) 
+		/*Bit#(64) mask = case (bytes) 
 			1: 64'b1;
 			2: 64'b11;
 			4: 64'b1111;
 			8: 64'b11111111;
 			64: ~64'h0;
 			default: 0;
-			endcase;
+			endcase;*/
+           Bit#(64) mask = (1 << bytes) - 1;
 
 		let rowidx = addr>>6; // 64 bytes per row
 		let offset = addr & extend(6'b111111);

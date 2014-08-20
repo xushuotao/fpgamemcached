@@ -1,97 +1,180 @@
+`include "ProtocolHeader.bsv"
 
+import JenkinsHash::*;
+import Hashtable::*;
+import Valuestr::*;
+import Time::*;
+import DRAMController::*;
 
-//import FIFO::*;
-/*
-typedef struct{
-   Bit#(32) a;
-   Bit#(32) b;
-   } S1 deriving (Bits);
-
-typedef struct{
-   Bit#(32) a;
-   Bit#(16) b;
-   Bit#(7) c;
-   } S2 deriving (Bits);
-
-typedef enum {
-   E1Choice1,
-   E1Choice2,
-   E1Choice3
-   } E1 deriving (Bits,Eq);
-
-typedef struct{
-   Bit#(32) a;
-   E1 e1;
-   } S3 deriving (Bits);
-
-interface SimpleIndication;
-    method Action heard1(Bit#(32) v);
-    method Action heard2(Bit#(16) a, Bit#(16) b);
-    method Action heard3(S1 v);
-    method Action heard4(S2 v);
-    method Action heard5(Bit#(32) a, Bit#(64) b, Bit#(32) c);
-    method Action heard6(Bit#(32) a, Bit#(40) b, Bit#(32) c);
-    method Action heard7(Bit#(32) a, E1 e1);
-endinterface
-
-interface SimpleRequest;
-    method Action say1(Bit#(32) v);
-    method Action say2(Bit#(16) a, Bit#(16) b);
-    method Action say3(S1 v);
-    method Action say4(S2 v);
-    method Action say5(Bit#(32)a, Bit#(64) b, Bit#(32) c);
-    method Action say6(Bit#(32)a, Bit#(40) b, Bit#(32) c);
-    method Action say7(S3 v);
-endinterface
-
-typedef struct {
-    Bit#(32) a;
-    Bit#(40) b;
-    Bit#(32) c;
-} Say6ReqSimple deriving (Bits);
-
-*/
+import FIFO::*;
+import BRAMFIFO::*;
 
 interface ServerIndication;
+   method Action ready4dta();
+   method Action initRdBuf(Bit#(64) nBytes);
+   method Action valData(Bit#(64) v);
    method Action hexdump(Bit#(32) v);
 endinterface
 
 interface ServerRequest;
-   method Action receive_cmd(Bit#(32) cmd);
+   /*** initialize ****/
+   method Action initValDelimit(Bit#(64) lgSz1, Bit#(64) lgSz2, Bit#(64) lgSz3);
+   method Action initAddrDelimit(Bit#(64) lgOffset1, Bit#(64) lgOffset2, Bit#(64) lgOffset3);
+   
+   /*** cmd key dta request ***/
+   method Action receive_cmd(Protocol_Binary_Request_Header cmd);
+   method Action receive_key(Bit#(64) key);
+   method Action receive_dta(Bit#(64) dta);
 endinterface
 
-module mkServerRequest#(ServerIndication indication)(ServerRequest);
+module mkServerRequest#(ServerIndication indication, DRAMControllerIfc dram)(ServerRequest);
    
-   method Action receive_cmd(Bit#(32) cmd);
-      indication.hexdump(cmd);
-   endmethod
-   /*
-   method Action say1(Bit#(32) v);
-      indication.heard1(v);
+   //let ddr3_ctrl_user <- mkDDR3Simulator;
+   
+  // let ddr3_ctrl_user_2 <- mkDDR3Simulator;
+      
+   //let dram <- mkDRAMController(ddr3_ctrl_user);
+   
+   //let dram_2 <- mkDRAMController(ddr3_ctrl_user_2);
+   
+   let clk <- mkLogicClock;
+   
+   let valstr_acc <- mkValRawAccess(clk, dram);
+   
+   let valstr_mng <- mkValManager(dram);
+   
+   let htable <- mkAssocHashtb(dram, clk, valstr_mng.valAlloc);
+   
+   let hash <- mkJenkinsHash;
+   
+   FIFO#(Bit#(64)) keyBuf <- mkSizedBRAMFIFO(32);
+   
+   FIFO#(Tuple3#(Bit#(16), Bit#(32), Protocol_Binary_Command)) cmd2Hash <- mkFIFO;
+   FIFO#(Tuple3#(Bit#(16), Bit#(32), Protocol_Binary_Command)) hash2Table <- mkFIFO;
+   FIFO#(Tuple3#(Bit#(16), Bit#(32), Protocol_Binary_Command)) table2Val <- mkFIFO;
+   
+   FIFO#(Bit#(64)) keyFifo <- mkFIFO;
+   FIFO#(Bit#(64)) dtaFifo <- mkFIFO;
+   
+   //Reg#(Bit#(7)) keyBuf_wp <- mkRegU();
+   
+   //Reg#(Bit#(7)) keyBuf_rp <- mkRegU();
+   
+   Reg#(Bit#(7)) keyBufDelimit <- mkRegU();
+   
+
+   
+   rule doHash;
+      cmd2Hash.deq;
+      let v = cmd2Hash.first;
+      let keylen = tpl_1(v);
+      hash.start(extend(keylen));
+      hash2Table.enq(v);
+   endrule
+   
+   rule key2Hash;
+      let v = keyFifo.first;
+      keyFifo.deq;
+      $display("Memcached Get key: %h", v);
+      hash.putKey(keyFifo.first);
+      keyBuf.enq(v);
+   endrule
+   
+   rule doTable;
+      let d = hash2Table.first;
+      hash2Table.deq();
+      
+      table2Val.enq(d);
+      
+      let keylen = tpl_1(d);
+      let nBytes = tpl_2(d);
+      let hv <- hash.getHash();
+      $display("Memcached Calc hash val:%h", hv);
+      
+      htable.readTable(truncate(keylen), hv, extend(nBytes));
+   endrule
+   
+   rule key2Table;
+      let v = keyBuf.first();
+      keyBuf.deq();
+      htable.keyTokens(v);
+   endrule
+   
+   rule doVal;
+      let d = table2Val.first;
+      table2Val.deq();
+      
+      let opcode = tpl_3(d);
+      let v <- htable.getValAddr();
+      
+      let addr = tpl_1(v);
+      let nBytes = tpl_2(v);
+      
+      $display("doVal: opcode = %h, addr = %d, nBytes = %d", opcode, addr, nBytes);
+      
+      if (opcode == PROTOCOL_BINARY_CMD_GET) begin
+         $display("doVal: Get Cmd");
+         valstr_acc.readReq(addr, nBytes);
+         indication.initRdBuf(nBytes);
+      end
+      else if (opcode == PROTOCOL_BINARY_CMD_SET) begin
+         $display("doVal: Set Cmd");
+         valstr_acc.writeReq(addr, nBytes);
+         indication.ready4dta();
+      end
+      
+
+   endrule
+   
+   rule doVal_2;
+      let v = dtaFifo.first();
+      $display("Server:: Received Data = %h", v);
+      dtaFifo.deq();
+      valstr_acc.writeVal(v);
+   endrule
+   
+   rule doVal_3;
+      let v <- valstr_acc.readVal();
+      $display("Server:: Sending Data = %h", v);
+      indication.valData(v);
+   endrule
+      
+      
+   
+//   let inputFIFO <- mkFIFO#(Bit#(32));
+   method Action receive_cmd(Protocol_Binary_Request_Header cmd);
+      //indication.hexdump(cmd);
+      $display("Magic Size: %d", valueOf(MagicSz));
+      $display("Opcode Size: %d", valueOf(OpcodeSz));
+      $display("Header Size: %d", valueOf(ReqHeaderSz));
+      $display("Server received: %h",cmd);
+      //$display(cmd);
+
+      cmd2Hash.enq(tuple3(cmd.keylen, cmd.bodylen - extend(cmd.keylen), cmd.opcode));
+      //cmd.bodylen;
+      
+      //keyBuf_wp <= 0;
+      if ( cmd.keylen[5:0] == 0 )
+         keyBufDelimit <= truncate((cmd.keylen >> 6) - 1);
+      else
+         keyBufDelimit <= truncate(cmd.keylen >> 6);
    endmethod
    
-   method Action say2(Bit#(16) a, Bit#(16) b);
-      indication.heard2(a,b);
+   method Action receive_key(Bit#(64) key);
+      keyFifo.enq(key);
    endmethod
       
-   method Action say3(S1 v);
-      indication.heard3(v);
+   method Action receive_dta(Bit#(64) dta);
+      dtaFifo.enq(dta);
+   endmethod
+
+   method Action initValDelimit(Bit#(64) lgSz1, Bit#(64) lgSz2, Bit#(64) lgSz3);
+      valstr_mng.valInit.initValDelimit(lgSz1, lgSz2, lgSz3);
    endmethod
    
-   method Action say4(S2 v);
-      indication.heard4(v);
+   method Action initAddrDelimit(Bit#(64) lgOffset1, Bit#(64) lgOffset2, Bit#(64) lgOffset3);
+      valstr_mng.valInit.initAddrDelimit(lgOffset1, lgOffset2, lgOffset3);
+      htable.initTable(lgOffset1);
    endmethod
-      
-   method Action say5(Bit#(32) a, Bit#(64) b, Bit#(32) c);
-      indication.heard5(a, b, c);
-   endmethod
-
-   method Action say6(Bit#(32) a, Bit#(40) b, Bit#(32) c);
-      indication.heard6(a, b, c);
-   endmethod
-
-   method Action say7(S3 v);
-      indication.heard7(v.a, v.e1);
-   endmethod
-   */
+   
 endmodule

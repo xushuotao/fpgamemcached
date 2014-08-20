@@ -1,11 +1,12 @@
 #include "MemcachedClient.h"
-
+#include "GeneratedTypes.h"
 #include <unistd.h>
+#include <math.h>
 
 // xbvs-related
 
 
-#include "protocol_binary.h"
+//#include "protocol_binary.h"
 
 MemcachedClient::MemcachedClient(){
    indication = new ServerIndication(IfcNames_ServerIndication);
@@ -23,29 +24,145 @@ bool MemcachedClient::set(const void* key,
                           size_t keylen,
                           const void* dta,
                           size_t dtalen){
-   pthread_mutex_lock(&(indication->mu));
-   size_t bufsz = sizeof(protocol_binary_request_header) + keylen + dtalen; 
-   char* buf = new char[bufsz];
+   //pthread_mutex_lock(&(indication->mu));
+   //size_t bufsz = sizeof(protocol_binary_request_header) + keylen + dtalen; 
+   //char* buf = new char[bufsz];
 
-   printf("bufsize = %d\n", bufsz);
+   // printf("bufsize = %d\n", bufsz);
    
-   generate_command(buf, bufsz, PROTOCOL_BINARY_CMD_SET, key, keylen, dta, dtalen);
+   //generate_command(buf, bufsz, PROTOCOL_BINARY_CMD_SET, key, keylen, dta, dtalen);
+   
+   //send_binary_protocol(buf, bufsz);
 
-   send_binary_protocol(buf, bufsz);
+  printf("shit\n");
+   
+  while (!indication->sysReady());
+  indication->resetSys(false);
+  indication->resetDta(false);
+  //usleep(1000000);
+  //delete buf;
+  device->receive_cmd(gen_req_header(Protocol_Binary_Command_PROTOCOL_BINARY_CMD_SET, key, keylen, dta, dtalen));
 
-   printf("shit\n");
+  uint64_t* k = (uint64_t*)key;
+  size_t keyCnt = keylen;
+  while ( keyCnt >= 8){
+    device->receive_key(*k);
+    k++;
+    keyCnt -= 8;
+  }
 
-   //usleep(1000000);
-   delete buf;
+  char* ckey = (char*)key;
+  printf("64bit key = %016x, mask = %016x, keyCnt = %d\n", *k, (((uint64_t)1 << (keyCnt*8))-1), keyCnt);
+  printf("key[0] = %02x\n", ckey[0]);
+  printf("key[1] = %02x\n", ckey[1]);
+  printf("key[2] = %02x\n", ckey[2]);
+  printf("key[3] = %02x\n", ckey[3]);
+  printf("key[4] = %02x\n", ckey[4]);
+  uint64_t lastkey = 0;
+  if ( keyCnt != 0) {
+    device->receive_key((*k) &  (((uint64_t)1 << (keyCnt*8))-1));
+  }
 
-   pthread_cond_wait(&(indication->cond), &(indication->mu));
-   pthread_mutex_unlock(&(indication->mu));
+  while(!indication->dtaReady());
+  
+  printf("Start sending the data\n");
+
+  uint64_t* d = (uint64_t*)dta;
+  size_t dtaCnt = dtalen;
+  while ( dtaCnt >= 8){
+    device->receive_dta(*d);
+    d++;
+    dtaCnt -= 8;
+  }
+
+  uint64_t lastdta = 0;
+  if ( dtaCnt != 0) {
+    device->receive_dta((*d) &  (((uint64_t)1 << (dtaCnt*8))-1));
+  }
+
+  indication->resetSys(true);
+  indication->resetDta(false);
+  return true;
 }
+   
+   
+
+//while (!(indication->flag)){}
+   //pthread_cond_wait(&(indication->cond), &(indication->mu));
+   //pthread_mutex_unlock(&(indication->mu));
+//}
 
 char* MemcachedClient::get(char* key, size_t keylen){
+  while (!indication->sysReady());
+  indication->resetSys(false);
+  indication->resetDta(false);
    
+  device->receive_cmd(gen_req_header(Protocol_Binary_Command_PROTOCOL_BINARY_CMD_GET, key, keylen, NULL, 0));
+
+  uint64_t* k = (uint64_t*)key;
+  size_t keyCnt = keylen;
+  while ( keyCnt >= 8){
+    device->receive_key(*k);
+    k++;
+    keyCnt -= 8;
+  }
+
+  uint64_t lastkey = 0;
+  if ( keyCnt != 0) {
+    device->receive_key((*k) &  (((uint64_t)1 << (keyCnt*8))-1));
+  }
+
+  while(!indication->dtaReady());
+  
+  indication->resetSys(true);
+  indication->resetDta(false);
+
+  return indication->data;
 }
 
+void MemcachedClient::initSystem(int size1,
+                                 int size2,
+                                 int size3,
+                                 int addr1,
+                                 int addr2,
+                                 int addr3){
+  int lgSz1 = (int)log2((double)size1);
+  int lgSz2 = (int)log2((double)size2);
+  int lgSz3 = (int)log2((double)size3);
+
+  if ( lgSz2 <= lgSz1 ) lgSz2 = lgSz1+1;
+  if ( lgSz3 <= lgSz2 ) lgSz3 = lgSz2+1;
+
+  int lgAddr1 = (int)log2((double)addr1);
+  int lgAddr2 = (int)log2((double)addr2);
+  int lgAddr3 = (int)log2((double)addr3);
+
+  if ( lgAddr2 <= lgAddr1 ) lgAddr2 = lgAddr1+1;
+  if ( lgAddr3 <= lgAddr2 ) lgAddr3 = lgAddr2+1;
+
+  device->initValDelimit(lgSz1, lgSz2, lgSz3);
+  device->initAddrDelimit(lgAddr1, lgAddr2, lgAddr3);
+
+}
+
+Protocol_Binary_Request_Header MemcachedClient::gen_req_header(Protocol_Binary_Command cmd,
+                                                               const void* key,
+                                                               size_t keylen,
+                                                               const void* dta,
+                                                               size_t dtalen){
+   Protocol_Binary_Request_Header request;
+   memset(&request, 0, sizeof(request));
+   request.magic = Protocol_Binary_Magic_PROTOCOL_BINARY_REQ;
+   request.opcode = cmd;
+   request.keylen = keylen;
+   request.bodylen = keylen + dtalen;
+   request.opaque = 0xdeadbeef;
+
+   return request;
+}
+
+
+/*
 void MemcachedClient::generate_command(char* buf,
                                        size_t bufsz,
                                        uint8_t cmd,
@@ -73,7 +190,8 @@ void MemcachedClient::generate_command(char* buf,
    memcpy(buf + key_offset + keylen, dta, dtalen);
       // }                                                 
 }
-
+*/
+/*
 void MemcachedClient::send_binary_protocol(const char* buf, size_t bufsz){
    uint32_t send_word;
 
@@ -95,7 +213,7 @@ void MemcachedClient::send_binary_protocol(const char* buf, size_t bufsz){
       device->receive_cmd(send_word);
    }
 }
-
+*/
 
 
 
