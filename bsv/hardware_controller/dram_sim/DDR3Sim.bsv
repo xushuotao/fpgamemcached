@@ -34,7 +34,7 @@ typedef Bit#(29) DDR3Address;
 typedef Bit#(64) ByteEn;
 typedef Bit#(512) DDR3Data;
 
-interface DDR3_User_VC707;
+interface DDR3_User_VC707_Sim;
    interface Clock clock;
    interface Reset reset_n;
    method Bool init_done;
@@ -43,7 +43,7 @@ interface DDR3_User_VC707;
 endinterface
      
 
-module mkDDR3Simulator(DDR3_User_VC707);
+module mkDDR3Simulator(DDR3_User_VC707_Sim);
    RegFile#(Bit#(26), DDR3Data) data <- mkRegFileFull();
    FIFO#(DDR3Data) responses <- mkFIFO();
    
