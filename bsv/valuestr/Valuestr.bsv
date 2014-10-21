@@ -24,7 +24,22 @@ typedef TDiv#(HeaderSz, 512) HeaderBurstSz;
 
 typedef enum {Idle, ProcHeader, Proc} ValAcc_State deriving (Bits, Eq);
 
+typedef struct {
+   Bit#(64) addr;
+   Bit#(64) nBytes;
+   } DRAMReq deriving (Bits, Eq);
+
+
+
 /* interface defintions */
+
+interface DebugProbes_Val;
+   method DRAMReq debugRdReq;
+   method Bit#(64) debugRdDta;
+   method DRAMReq debugWrReq;
+   method Bit#(64) debugWrDta;
+endinterface
+
 
 interface ValAccess_ifc;
    method Action readReq(Bit#(64) startAddr, Bit#(64) nBytes);
@@ -32,6 +47,8 @@ interface ValAccess_ifc;
    
    method Action writeReq(Bit#(64) startAddr, Bit#(64) nBytes);
    method Action writeVal(Bit#(64) wrVal);
+
+   interface DebugProbes_Val debug;
 endinterface
 
 //(*synthesize*)
@@ -69,6 +86,7 @@ module mkValRawAccess#(Clk_ifc real_time, DRAMControllerIfc dram)(ValAccess_ifc)
    endrule
    
    rule driveReadCmd if (state == Proc && byteCnt < numBytes && rnw);
+      $display("Valstr issuing read cmd: currAddr = %d", currAddr);
       dram.readReq(currAddr, 64);
       if (currAddr[5:0] == 0) begin
          currAddr <= currAddr + 64;
@@ -91,7 +109,7 @@ module mkValRawAccess#(Clk_ifc real_time, DRAMControllerIfc dram)(ValAccess_ifc)
          else begin 
           
             if (lineCnt >= extend(wordCnt) ) begin
-               //$display("enquening result: lineBuf = %h \nlineCnt = %d, wordCnt = %d, byteCnt2 = %d, numBytes = %d",lineBuf, lineCnt, wordCnt, byteCnt2, numBytes );
+               $display("enquening result: lineBuf = %h \nlineCnt = %d, wordCnt = %d, byteCnt2 = %d, numBytes = %d",lineBuf, lineCnt, wordCnt, byteCnt2, numBytes );
                //readRespQ.enq((wordBuf << {wordCnt,3'b0}) | (truncate(lineBuf) & ((1 << {wordCnt,3'b0}) - 1)));
                readRespQ.enq(truncate({lineBuf[63:0], wordBuf} >> {wordCnt, 3'b0}));
                byteCnt2 <= byteCnt2 + 8; //+ extend(wordCnt);
@@ -108,7 +126,7 @@ module mkValRawAccess#(Clk_ifc real_time, DRAMControllerIfc dram)(ValAccess_ifc)
                wordCnt <= 8;
             end
             else begin
-               //$display("shift wordBuf = %h \nlineCnt = %d, wordCnt = %d", wordBuf, lineCnt, wordCnt);
+               $display("shift wordBuf = %h \nlineCnt = %d, wordCnt = %d", wordBuf, lineCnt, wordCnt);
                wordBuf <= truncate({lineBuf[63:0],wordBuf} >> (lineCnt <<3));//(wordBuf << (lineCnt << 3)) | (truncate(lineBuf) & ((1 << (lineCnt << 3)) - 1));
                wordCnt <= wordCnt - truncate(lineCnt);
                lineCnt <= 64;
@@ -149,7 +167,7 @@ module mkValRawAccess#(Clk_ifc real_time, DRAMControllerIfc dram)(ValAccess_ifc)
                numBursts <= numBursts - 1;
             end
             else begin
-               //$display("ValStr write(Last): currAddr = %d, data = %h, nBytes = %d",currAddr, {wordBuf,lineBuf} >> {lineCnt,3'b0}, numBytes);
+               $display("ValStr write(Last): currAddr = %d, data = %h, nBytes = %d",currAddr, {wordBuf,lineBuf} >> {lineCnt,3'b0}, numBytes);
                Bit#(6) offset = truncate(currAddr);
                dram.write(currAddr, truncate({wordBuf,lineBuf} >> {lineCnt, 3'b0}) >> {offset,3'b0}, truncate(numBytes));
                state <= Idle;
@@ -185,7 +203,7 @@ module mkValRawAccess#(Clk_ifc real_time, DRAMControllerIfc dram)(ValAccess_ifc)
             
             //$display("Valstr write: initNbytes = %d", initNbytes);
             numBytes <= numBytes - extend(nBytes);
-            //$display("ValStr write(Normal): currAddr = %d, data = %h, nBytes = %d",currAddr, ({wordBuf,lineBuf} >> (lineCnt << 3)) >> {offset,3'b0}, nBytes);
+            $display("ValStr write(Normal): currAddr = %d, data = %h, nBytes = %d",currAddr, ({wordBuf,lineBuf} >> (lineCnt << 3)) >> {offset,3'b0}, nBytes);
             dram.write(currAddr, truncate({wordBuf,lineBuf} >> (lineCnt << 3)) >> {offset,3'b0}, nBytes);
             wordBuf <= wordBuf >> (lineCnt << 3);
             lineCnt <= 64;
@@ -195,7 +213,10 @@ module mkValRawAccess#(Clk_ifc real_time, DRAMControllerIfc dram)(ValAccess_ifc)
    endrule
             
       
-      
+   Wire#(DRAMReq) rdReq <- mkWire;
+   Wire#(DRAMReq) wrReq <- mkWire;
+   Wire#(Bit#(64)) rdDta <- mkWire;
+   Wire#(Bit#(64)) wrDta <- mkWire;
       
    
    method Action readReq(Bit#(64) startAddr, Bit#(64) nBytes) if (state == Idle);
@@ -220,11 +241,14 @@ module mkValRawAccess#(Clk_ifc real_time, DRAMControllerIfc dram)(ValAccess_ifc)
          numBursts <= zeroExtend(nBytes[63:3]) + 1;
       
       rnw <= True;
+   
+      rdReq <= DRAMReq{addr: startAddr, nBytes: nBytes};
    endmethod
    
    method ActionValue#(Bit#(64)) readVal();
       let d = readRespQ.first;
       readRespQ.deq;
+      rdDta <= d;
       return d;
    endmethod
    
@@ -249,11 +273,30 @@ module mkValRawAccess#(Clk_ifc real_time, DRAMControllerIfc dram)(ValAccess_ifc)
          numBursts <= zeroExtend(nBytes[63:3]) + 1;
    
       rnw <= False;
+   
+      wrReq <= DRAMReq{addr: startAddr, nBytes: nBytes};
    endmethod
    
    method Action writeVal(Bit#(64) wrVal); 
       wDataWord.enq(wrVal);
+      wrDta <= wrVal;
    endmethod
+         
+   interface DebugProbes_Val debug;
+      method DRAMReq debugRdReq;
+         return rdReq;
+      endmethod
+      method Bit#(64) debugRdDta;
+         return rdDta;
+      endmethod
+      method DRAMReq debugWrReq;
+         return wrReq;
+      endmethod
+      method Bit#(64) debugWrDta;
+         return wrDta;
+      endmethod
+   endinterface
+
 endmodule
 
 /*---------------------------------------------------------------------------------------*/
