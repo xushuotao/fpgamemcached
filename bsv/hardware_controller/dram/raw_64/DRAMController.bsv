@@ -44,12 +44,14 @@ typedef struct {
     // otherwise strange things will happen.
     // For example: address 0 refers to the first 4 64 bit words in memory.
     //              address 4 refers to the second 4 64 bit words in memory.
-    DDR3Address address;
+   //DDR3Address address;
+   Bit#(64) address;
 
     // Data to write.
     // For read requests this is ignored.
     // Only those bytes with corresponding bit set in writeen will be written.
-    DDR3Data datain;
+   //DDR3Data datain;
+   Bit#(512) datain;
 } DDR3Request deriving(Bits, Eq);
 
 // DDR2 Response.

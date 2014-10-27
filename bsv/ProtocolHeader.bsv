@@ -8,17 +8,18 @@ typedef enum {
 * See section 3.2 Response Status
 */
 typedef enum {
-   PROTOCOL_BINARY_RESPONSE_SUCCESS = 8'h00,
-   PROTOCOL_BINARY_RESPONSE_KEY_ENOENT = 8'h01,
-   PROTOCOL_BINARY_RESPONSE_KEY_EEXISTS = 8'h02,
-   PROTOCOL_BINARY_RESPONSE_E2BIG = 8'h03,
-   PROTOCOL_BINARY_RESPONSE_EINVAL = 8'h04,
-   PROTOCOL_BINARY_RESPONSE_NOT_STORED = 8'h05,
-   PROTOCOL_BINARY_RESPONSE_DELTA_BADVAL = 8'h06,
-   PROTOCOL_BINARY_RESPONSE_AUTH_ERROR = 8'h20,
-   PROTOCOL_BINARY_RESPONSE_AUTH_CONTINUE = 8'h21,
-   PROTOCOL_BINARY_RESPONSE_UNKNOWN_COMMAND = 8'h81,
-   PROTOCOL_BINARY_RESPONSE_ENOMEM = 8'h82
+   PROTOCOL_BINARY_RESPONSE_SUCCESS = 16'h0000,
+   PROTOCOL_BINARY_RESPONSE_KEY_ENOENT = 16'h0001,
+   PROTOCOL_BINARY_RESPONSE_KEY_EEXISTS = 16'h0002,
+   PROTOCOL_BINARY_RESPONSE_E2BIG = 16'h0003,
+   PROTOCOL_BINARY_RESPONSE_EINVAL = 16'h0004,
+   PROTOCOL_BINARY_RESPONSE_NOT_STORED = 16'h0005,
+   PROTOCOL_BINARY_RESPONSE_DELTA_BADVAL = 16'h0006,
+   PROTOCOL_BINARY_RESPONSE_AUTH_ERROR = 16'h0020,
+   PROTOCOL_BINARY_RESPONSE_AUTH_CONTINUE = 16'h0021,
+   PROTOCOL_BINARY_RESPONSE_UNKNOWN_COMMAND = 16'h0081,
+   PROTOCOL_BINARY_RESPONSE_ENOMEM = 16'h0082,
+   PROTOCOL_BINARY_RESPONSE_NULL = 16'hffff
    } Protocol_Binary_Response_Status deriving (Eq,Bits);
 
 
@@ -94,6 +95,20 @@ typedef struct {
    Bit#(64) cas;
    } Protocol_Binary_Request_Header deriving (Eq, Bits);
 
+typedef struct {
+   Protocol_Binary_Magic magic;
+   Protocol_Binary_Command opcode;
+   Bit#(16) keylen;
+   Bit#(8) extlen;
+   Bit#(8) datatype;
+   Protocol_Binary_Response_Status status;
+   Bit#(32) bodylen;
+   Bit#(32) opaque;
+   Bit#(64) cas;
+   }Protocol_Binary_Response_Header deriving (Eq, Bits);
+
+
 typedef SizeOf#(Protocol_Binary_Magic) MagicSz;
 typedef SizeOf#(Protocol_Binary_Command) OpcodeSz;
 typedef SizeOf#(Protocol_Binary_Request_Header) ReqHeaderSz;
+typedef SizeOf#(Protocol_Binary_Response_Header) RespHeaderSz;

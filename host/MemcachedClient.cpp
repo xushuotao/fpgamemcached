@@ -1,123 +1,98 @@
 #include "MemcachedClient.h"
-#include "GeneratedTypes.h"
+//#include "GeneratedTypes.h"
 #include <unistd.h>
 #include <math.h>
+#include <string.h>
 
 // xbvs-related
 
 
-//#include "protocol_binary.h"
+#include "protocol_binary.h"
+
+//int key_offset = ceil((float)sizeof(Protocol_Binary_Request_Header)/8.0)*8;
+
 
 MemcachedClient::MemcachedClient(){
-   indication = new ServerIndication(IfcNames_ServerIndication);
-   device = new ServerRequestProxy(IfcNames_ServerRequest);
+  
+  indication = new ServerIndication(IfcNames_ServerIndication);
+  device = new ServerRequestProxy(IfcNames_ServerRequest);
 
-   pthread_t tid;
-   fprintf(stderr, "Constructor::creating exec thread\n");
-   if(pthread_create(&tid, NULL,  portalExec, NULL)){
-      fprintf(stderr, "Constructor::error creating exec thread\n");
-      exit(1);
-   }
+  hostDmaDebugRequest = new DmaDebugRequestProxy(IfcNames_HostDmaDebugRequest);
+  dmap = new MMUConfigRequestProxy(IfcNames_HostMMUConfigRequest);
+  dma = new DmaManager(hostDmaDebugRequest, dmap);
+  hostDmaDebugIndication = new DmaDebugIndication(dma, IfcNames_HostDmaDebugIndication);
+  hostMMUConfigIndication = new MMUConfigIndication(dma, IfcNames_HostMMUConfigIndication);
+
+  fprintf(stderr, "Main::allocating memory...\n");
+
+  size_t alloc_sz = 256 + (1 << 20);// + key_offset;
+  
+  srcAlloc = portalAlloc(alloc_sz);
+  dstAlloc = portalAlloc(alloc_sz);
+ 
+  srcBuffer = (unsigned int *)portalMmap(srcAlloc, alloc_sz);
+  dstBuffer = (unsigned int *)portalMmap(dstAlloc, alloc_sz);
+
+  portalExec_start();
+
+  portalDCacheFlushInval(srcAlloc, alloc_sz, srcBuffer);
+  portalDCacheFlushInval(dstAlloc, alloc_sz, dstBuffer);
+  fprintf(stderr, "Main::flush and invalidate complete\n");
+
+  ref_srcAlloc = dma->reference(srcAlloc);
+  ref_dstAlloc = dma->reference(dstAlloc);
+  
+  fprintf(stderr, "ref_srcAlloc=%d\n", ref_srcAlloc);
+  fprintf(stderr, "ref_dstAlloc=%d\n", ref_dstAlloc);
+
 }
 
 bool MemcachedClient::set(const void* key,
                           size_t keylen,
                           const void* dta,
                           size_t dtalen){
-   //pthread_mutex_lock(&(indication->mu));
-   //size_t bufsz = sizeof(protocol_binary_request_header) + keylen + dtalen; 
-   //char* buf = new char[bufsz];
 
-   // printf("bufsize = %d\n", bufsz);
-   
-   //generate_command(buf, bufsz, PROTOCOL_BINARY_CMD_SET, key, keylen, dta, dtalen);
-   
-   //send_binary_protocol(buf, bufsz);
-
-  printf("shit\n");
-   
-  while (!indication->sysReady());
-  indication->resetSys(false);
-  indication->resetDta(false);
-  //usleep(1000000);
-  //delete buf;
-  device->receive_cmd(gen_req_header(Protocol_Binary_Command_PROTOCOL_BINARY_CMD_SET, key, keylen, dta, dtalen));
-
-  uint64_t* k = (uint64_t*)key;
-  size_t keyCnt = keylen;
-  while ( keyCnt >= 8){
-    device->receive_key(*k);
-    k++;
-    keyCnt -= 8;
-  }
-
-  char* ckey = (char*)key;
-  printf("64bit key = %016x, mask = %016x, keyCnt = %d\n", *k, (((uint64_t)1 << (keyCnt*8))-1), keyCnt);
-  printf("key[0] = %02x\n", ckey[0]);
-  printf("key[1] = %02x\n", ckey[1]);
-  printf("key[2] = %02x\n", ckey[2]);
-  printf("key[3] = %02x\n", ckey[3]);
-  printf("key[4] = %02x\n", ckey[4]);
-  uint64_t lastkey = 0;
-  if ( keyCnt != 0) {
-    device->receive_key((*k) &  (((uint64_t)1 << (keyCnt*8))-1));
-  }
-
-  while(!indication->dtaReady());
+  int dta_offset = ceil((float)keylen/8.0)*8;
   
-  printf("Start sending the data\n");
+  generate_keydtaBuf(key, dta_offset, dta, dtalen);
+  
+  device->start(gen_req_header(PROTOCOL_BINARY_CMD_SET, key, keylen, dta, dtalen), ref_srcAlloc, ref_dstAlloc, dta_offset + dtalen);
 
-  uint64_t* d = (uint64_t*)dta;
-  size_t dtaCnt = dtalen;
-  while ( dtaCnt >= 8){
-    device->receive_dta(*d);
-    d++;
-    dtaCnt -= 8;
-  }
+  //sem_wait(&indication->done_sem);
 
-  uint64_t lastdta = 0;
-  if ( dtaCnt != 0) {
-    device->receive_dta((*d) &  (((uint64_t)1 << (dtaCnt*8))-1));
-  }
+  pthread_mutex_lock(&indication->mutex);
+  pthread_cond_wait(&indication->cond, &indication->mutex);
+  //fprintf(stderr, "Wait finished\n");
+  Response_Header header = indication->header;
+  pthread_mutex_unlock(&indication->mutex);
 
-  indication->resetSys(true);
-  indication->resetDta(false);
-  return true;
+  char* retval = NULL;
+  return process_response(header, retval);
+  
+  
 }
    
-   
+ 
 
-//while (!(indication->flag)){}
-   //pthread_cond_wait(&(indication->cond), &(indication->mu));
-   //pthread_mutex_unlock(&(indication->mu));
-//}
 
 char* MemcachedClient::get(char* key, size_t keylen){
-  while (!indication->sysReady());
-  indication->resetSys(false);
-  indication->resetDta(false);
-   
-  device->receive_cmd(gen_req_header(Protocol_Binary_Command_PROTOCOL_BINARY_CMD_GET, key, keylen, NULL, 0));
 
-  uint64_t* k = (uint64_t*)key;
-  size_t keyCnt = keylen;
-  while ( keyCnt >= 8){
-    device->receive_key(*k);
-    k++;
-    keyCnt -= 8;
-  }
+  generate_keydtaBuf(key, keylen, NULL, 0);
+  //fprintf(stderr, "shit\n");
+  device->start(gen_req_header(PROTOCOL_BINARY_CMD_GET, key, keylen, NULL, 0), ref_srcAlloc, ref_dstAlloc, keylen);
 
-  uint64_t lastkey = 0;
-  if ( keyCnt != 0) {
-    device->receive_key((*k) &  (((uint64_t)1 << (keyCnt*8))-1));
-  }
+  //sem_wait(&indication->done_sem);
+  pthread_mutex_lock(&indication->mutex);
+  pthread_cond_wait(&indication->cond, &indication->mutex);
+  Response_Header header = indication->header;
+  pthread_mutex_unlock(&indication->mutex);
 
-  while(!indication->dtaReady());
+  char* retval = NULL;
   
-  indication->resetSys(true);
-  indication->resetDta(false);
+  process_response(header, retval);
 
-  return indication->data;
+  return retval;
+
 }
 
 void MemcachedClient::initSystem(int size1,
@@ -142,25 +117,64 @@ void MemcachedClient::initSystem(int size1,
 
   device->initValDelimit(lgSz1, lgSz2, lgSz3);
   device->initAddrDelimit(lgAddr1, lgAddr2, lgAddr3);
-
 }
 
-Protocol_Binary_Request_Header MemcachedClient::gen_req_header(Protocol_Binary_Command cmd,
-                                                               const void* key,
-                                                               size_t keylen,
-                                                               const void* dta,
-                                                               size_t dtalen){
-   Protocol_Binary_Request_Header request;
-   memset(&request, 0, sizeof(request));
-   request.magic = Protocol_Binary_Magic_PROTOCOL_BINARY_REQ;
-   request.opcode = cmd;
-   request.keylen = keylen;
-   request.bodylen = keylen + dtalen;
-   request.opaque = 0xdeadbeef;
 
-   return request;
+
+
+void MemcachedClient::generate_keydtaBuf(const void*             key,
+                                       size_t                  keylen,
+                                       const void*             dta,
+                                       size_t                  dtalen){
+  //memcpy(srcBuffer, &header, sizeof(header));
+  memcpy(srcBuffer, key, keylen);
+  memcpy(((char*)srcBuffer) + keylen, dta, dtalen);
 }
 
+Request_Header MemcachedClient::gen_req_header(protocol_binary_command cmd,
+                                               const void* key,
+                                               size_t keylen,
+                                               const void* dta,
+                                               size_t dtalen){
+  Request_Header request;
+  memset(&request, 0, sizeof(request));
+  request.magic = PROTOCOL_BINARY_REQ;
+  request.opcode = cmd;
+  request.keylen = keylen;
+  request.bodylen = keylen + dtalen;
+  request.opaque = 0xdeadbeef;
+  
+  return request;
+}
+
+
+
+bool MemcachedClient::process_response(Response_Header header, char* &dtaBuf){
+
+  int dtalen;
+  if (header.status != PROTOCOL_BINARY_RESPONSE_SUCCESS) {
+    fprintf(stderr, "Operation not successful\n");
+    return false;
+  }
+
+  switch (header.opcode){
+  case PROTOCOL_BINARY_CMD_GET:
+    dtalen = header.bodylen - header.keylen;
+    dtaBuf = new char[dtalen];
+    memcpy(dtaBuf, (char*)dstBuffer, dtalen); 
+    fprintf(stderr, "process_response: GET command, nBytes = %d\n", dtalen);
+    break;
+  case PROTOCOL_BINARY_CMD_SET:
+    fprintf(stderr, "process_response: SET command\n");
+    break;
+  default:
+    fprintf(stderr, "Protocol Not Supported\n");
+    return false;
+    break;
+  }
+  
+  return true;
+}
 
 /*
 void MemcachedClient::generate_command(char* buf,

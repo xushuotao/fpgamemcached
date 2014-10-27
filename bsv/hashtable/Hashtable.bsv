@@ -67,11 +67,15 @@ typedef 0 DtaShfitSz;
 
 typedef TSub#(64, DtaShiftSz) KeyShiftSz;
 
+interface HashtableInitIfc;
+   method Action initTable(Bit#(64) lgOffset);
+endinterface
+
 interface HashtableIfc;
    method Action readTable(Bit#(8) keylen, Bit#(32) hv, Bit#(64) nBytes);
    method Action keyTokens(Bit#(64) keys);
    method ActionValue#(Tuple2#(Bit#(64), Bit#(64))) getValAddr();
-   method Action initTable(Bit#(64) lgOffset);
+   interface HashtableInitIfc init;
 endinterface
 
 function Bit#(TLog#(NumWays)) mask2ind (Bit#(NumWays) mask);
@@ -638,11 +642,13 @@ module mkAssocHashtb#(DRAMControllerIfc dram, Clk_ifc real_clk, ValAlloc_ifc val
       valAddrFifo.deq;
       return valAddrFifo.first;
    endmethod
-   
-   method Action initTable(Bit#(64) lgOffset) if (state == Idle);
-      //hvMax <= unpack((1 << lgOffset) - 1) / fromInteger(valueOf(ItemOffset));
-      addrTop <= (1 << lgOffset) - 1;
-   endmethod
+
+   interface HashtableInitIfc init;
+      method Action initTable(Bit#(64) lgOffset) if (state == Idle);
+         //hvMax <= unpack((1 << lgOffset) - 1) / fromInteger(valueOf(ItemOffset));
+         addrTop <= (1 << lgOffset) - 1;
+      endmethod
+   endinterface
 endmodule
 
 endpackage: Hashtable
