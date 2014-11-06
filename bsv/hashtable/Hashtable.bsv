@@ -13,10 +13,13 @@ import BRAM::*;
 
 import Valuestr::*;
 
+import BRAMFIFO::*;
+
+import Packet::*;
 //`define DEBUG
 
 typedef struct{
-   Bit#(4) idle;
+   Bit#(8) idle;
    Bit#(8) keylen; // key length
    Bit#(8) clsid; // slab class id
    Bit#(64) valAddr; // valueStore address
@@ -35,7 +38,7 @@ typedef Bit#(64) PhyAddr;
 
 typedef SizeOf#(ItemHeader) HeaderSz;
    
-typedef 64 LineWidth; // LineWidth 64/128/256/512
+typedef 128 LineWidth; // LineWidth 64/128/256/512
 
 typedef TDiv#(LineWidth, 8) LineBytes;
 
@@ -43,9 +46,9 @@ typedef TLog#(LineBytes) LgLineBytes;
 
 typedef TDiv#(HeaderSz, LineWidth) HeaderTokens;
 
-typedef TSub#(HeaderSz,TMul#(LineWidth,TSub#(TDiv#(HeaderSz, LineWidth),1))) HeaderResidualSz;
+typedef TSub#(HeaderSz,TMul#(LineWidth,TSub#(TDiv#(HeaderSz, LineWidth),1))) HeaderRemainderSz;
 
-typedef TDiv#(HeaderResidualSz, 8) HeaderResdualBytes;
+typedef TDiv#(HeaderRemainderSz, 8) HeaderRemainderBytes;
 
 typedef TLog#(LineWidth) LogLnWidth;
 
@@ -57,10 +60,11 @@ typedef TAdd#(HeaderSz,MaxKeyLen) MaxItemSize;
 
 typedef TDiv#(MaxItemSize, LineWidth) ItemOffset;
 
-typedef TSub#(LineWidth, HeaderResidualSz) LnSz4Key;
+typedef TSub#(LineWidth, HeaderRemainderSz) HeaderResidualSz;
+typedef TDiv#(HeaderResidualSz,8) HeaderResidualBytes;
 
 `ifndef HEADER_64_ALIGNED
-typedef TSub#(LnSz4Key, TMul#(64,TSub#(TDiv#(LnSz4Key,64),1))) DtaShiftSz;
+typedef TSub#(HeaderResidualSz, TMul#(64,TSub#(TDiv#(HeaderResidualSz,64),1))) DtaShiftSz;
 `else
 typedef 0 DtaShfitSz;
 `endif
@@ -79,19 +83,8 @@ interface HashtableIfc;
 endinterface
 
 function Bit#(TLog#(NumWays)) mask2ind (Bit#(NumWays) mask);
-   /*Bit#(TLog#(NumWays)) retval = case (mask)
-                                    1: 0;
-                                    2: 1;
-                                    4: 2;
-                                    8: 3;
-                                    16: 4;
-                                    32: 5;
-                                    64: 6;
-                                    128: 7;
-                                    default: 0;
-                                 endcase;*/
    Bit#(TLog#(NumWays)) retval = ?;
-   
+  
    for (Integer i = 0; i < valueOf(NumWays); i = i + 1) begin
       if ((mask >> fromInteger(i))[0] == 1) begin
          retval = fromInteger(i);
@@ -133,22 +126,43 @@ module mkAssocHashtb#(DRAMControllerIfc dram, Clk_ifc real_clk, ValAlloc_ifc val
    
    Reg#(State) state <- mkReg(Idle);
    
-   Reg#(PhyAddr) rdAddr <- mkRegU();
+   Reg#(PhyAddr) rdAddr_hdr <- mkRegU();
    Reg#(PhyAddr) wrAddr <- mkRegU();
+   Reg#(PhyAddr) rdAddr_key <- mkRegU();
+//   Reg#(PhyAddr) wrAddr <- mkRegU();
+
    Reg#(Bit#(8)) keyLen_rd <- mkRegU();
    Reg#(Bit#(8)) keyLen_wr <- mkRegU();
    Reg#(Bit#(8)) keylen_static <- mkRegU();
    
-   Reg#(Bit#(8)) reqCnt_header <- mkReg(0);
-   Reg#(Bit#(16)) reqCnt_data <- mkReg(0);
-   Reg#(Bit#(16)) respCnt_data <- mkReg(0);
+   Reg#(Bit#(8)) reqCnt_hdr <- mkReg(0);
+   Reg#(Bit#(8)) respCnt_hdr <- mkReg(0);
+   Reg#(Bit#(8)) reqCnt_key <- mkReg(0);
+   Reg#(Bit#(8)) respCnt_key <- mkReg(0);
+   
+   
+   Reg#(Bool) header_cmd <- mkRegU();
+   Reg#(Bool) key_cmd <- mkRegU();
+   
+   //Reg#(Bool) wr_header_cmd <- mkRegU();
+   Reg#(Bool) wr_key_cmd <- mkRegU();
+   Reg#(Bit#(8)) reqCnt_hdr_wr <- mkRegU();
+   Reg#(Bit#(8)) respCnt_hdr_wr <- mkRegU();
+
+
+   Reg#(Bit#(8)) numBufs <- mkRegU();
+   Reg#(Bit#(8)) numKeytokens <- mkRegU();
+   Reg#(Bit#(8)) numKeys <- mkRegU();
+   Reg#(Bit#(8)) reqCnt_key_wr <- mkRegU();
+   
+   Reg#(Bool) first_key_wr <- mkRegU();
+   Reg#(Bit#(8)) respCnt_key_wr <- mkRegU();
+
+   
    
    Reg#(Time_t) time_now <- mkRegU();
    
-   Reg#(Bit#(8)) procCnt <-mkReg(0);
   
-  
-   
    FIFO#(Bit#(512)) dataFifo <- mkFIFO();
    
    FIFO#(Bit#(64)) keyTks <- mkFIFO();
@@ -158,34 +172,18 @@ module mkAssocHashtb#(DRAMControllerIfc dram, Clk_ifc real_clk, ValAlloc_ifc val
    /***** procHeader variables ****/
    Reg#(Vector#(NumWays, ItemHeader)) headerBuf <- mkReg(unpack(0));
    
-   Reg#(Bit#(TAdd#(TLog#(HeaderSz),1))) headerCnt <- mkReg(0);
-   
-   //Reg#(512) lastHeaderToken <- mkRegU();
-   
    Reg#(Bit#(NumWays)) cmpMask <- mkReg(0);
    
    Reg#(Bit#(NumWays)) idleMask <- mkReg(0);
    
    
    /**** procData variables ****/
-   Reg#(Bit#(512)) dataFifoBuf <- mkReg(0);
-   Reg#(Bit#(TAdd#(TLog#(LineWidth),1))) dataFifoPtr <- mkReg(0); 
-   Reg#(Bit#(7)) keyBufPtr <- mkReg(0);
-
-   Reg#(Vector#(NumWays,Bit#(64))) tokenBuf <- mkRegU();
-  
+   FIFO#(Bit#(64)) keyBuf <- mkSizedBRAMFIFO(32);
    
-   BRAM_Configure cfg = defaultValue;
-   BRAM2Port#(Bit#(5), Bit#(64)) keyBuf <- mkBRAM2Server(cfg);
-   Reg#(Bit#(6)) keyBuf_wp <- mkReg(0);
-   Reg#(Bit#(6)) keyBuf_rp <- mkReg(0);
-   Reg#(Bit#(6)) keyBuf_rc <- mkReg(0);
-   
-   //FIFO#(Bit#(64)) keyBuf <- mkSizedBRAMFIFO(32);
-   
+   /**** procWrite_header variables ****/
    Reg#(ItemHeader) newHeader <- mkRegU();
    
-   Reg#(Bit#(LnSz4Key)) firstKeyLn <- mkRegU();
+   Reg#(Bit#(HeaderResidualSz)) firstKeyLn <- mkRegU();
    Reg#(Bit#(10)) firstKeyCnt <- mkRegU();
    
    Reg#(Bit#(11)) wrHeaderPtr <- mkRegU();
@@ -195,13 +193,14 @@ module mkAssocHashtb#(DRAMControllerIfc dram, Clk_ifc real_clk, ValAlloc_ifc val
    Reg#(Bit#(LineWidth)) lineBuf <- mkRegU();
    Reg#(Bit#(TAdd#(TLog#(LineWidth),1))) linePtr <- mkReg(0); 
    Reg#(Bit#(7)) keyPtr <- mkReg(0);
-   FIFO#(Bit#(64)) recvKeyFifo <- mkFIFO();
+   //FIFO#(Bit#(64)) recvKeyFifo <- mkFIFO();
    
    /*** debugging ***/
    Reg#(Bit#(32)) hv <- mkRegU();
    Reg#(Bit#(64)) reg_nBytes <- mkRegU();
    
-   rule recvReq (state == Idle);//(reqCnt == 0);
+   
+   rule recvReq (state == Idle);
       
       $display("First Stage: Iniatize parameters");
       let d = reqFifo.first();
@@ -212,69 +211,84 @@ module mkAssocHashtb#(DRAMControllerIfc dram, Clk_ifc real_clk, ValAlloc_ifc val
       reg_nBytes <= tpl_3(d);
       //rdAddr = (hashval * offset)<<3
       PhyAddr baseAddr = ((unpack(zeroExtend(tpl_2(d))) * fromInteger(valueOf(ItemOffset))) << 6) & addrTop; 
-      rdAddr <= baseAddr;
+      rdAddr_hdr <= baseAddr;
       wrAddr <= baseAddr;
       //dataCnt = (Keylen * 8 + HeaderSz) / LineWidth
       Bit#(16) totalBits = (zeroExtend(tpl_1(d)) << 3) + fromInteger(valueOf(HeaderSz));
       let headerBits = fromInteger(valueOf(HeaderSz));
       //TODO:: Bits have to be redefined
       Bit#(16) totalCnt_;
-      Bit#(8) reqCnt_header_;
+      Bit#(8) reqCnt_hdr_;
       
-      $display("keyLen = %d, headerSz = %d, totalBits = %d", tpl_1(d)<<3, fromInteger(valueOf(HeaderSz)), totalBits);
+      $display("keyLen_bits = %d, headerSz = %d, totalBits = %d", tpl_1(d)<<3, fromInteger(valueOf(HeaderSz)), totalBits);
       
-      if ( (totalBits & fromInteger(valueOf(TSub#(TExp#(LogLnWidth),1)))) == 0/*totalBits[valueOf(TSub#(LogLnWidth,1)):0] == 0*/) begin
+      if ( (totalBits & fromInteger(valueOf(TSub#(LineWidth,1)))) == 0) begin
          totalCnt_ = totalBits >> fromInteger(valueOf(LogLnWidth)); 
       end
       else begin
          totalCnt_ = (totalBits >> fromInteger(valueOf(LogLnWidth))) + 1; 
       end
       
-      //if (fromInteger(valueOf(HeaderResidualSz)) == 0) begin
-      reqCnt_header_ =  fromInteger(valueOf(HeaderTokens));
-      //end
-      //else begin
-       //  reqCnt_header_ =  fromInteger(valueOf(TAdd#(HeaderTokens,1)));
-      //end
+      reqCnt_hdr_ =  fromInteger(valueOf(HeaderTokens));
       
-      reqCnt_header <= reqCnt_header_;
-      reqCnt_data <= totalCnt_ - zeroExtend(reqCnt_header_);
+      reqCnt_hdr <= reqCnt_hdr_;
+      respCnt_hdr <= reqCnt_hdr_;
       
-      $display("reqCnt_header = %d, reqCnt_data = %d, totalCnt = %d", reqCnt_header_, totalCnt_ - zeroExtend(reqCnt_header_), totalCnt_);
+      reqCnt_hdr_wr <= 1;
+      respCnt_hdr_wr <= reqCnt_hdr_;
+      
+      Bit#(8) reqCnt_key_;
+      if ( valueOf(HeaderSz)%valueOf(LineWidth) == 0) begin
+         reqCnt_key_ = truncate(totalCnt_ - zeroExtend(reqCnt_hdr_));
+      end
+      else begin
+         reqCnt_key_ = truncate(totalCnt_ - zeroExtend(reqCnt_hdr_)) + 1;
+      end
+      
+      reqCnt_key <= reqCnt_key_;
+      numBufs <= reqCnt_key_;
+      
+      $display("reqCnt_hdr = %d, reqCnt_key = %d, totalCnt = %d", reqCnt_hdr_, totalCnt_ - zeroExtend(reqCnt_hdr_), totalCnt_);
       
       keyLen_rd <= tpl_1(d);
       keyLen_wr <= tpl_1(d);
+  
+      Bit#(8) keylen = tpl_1(d);    
       
+      Bit#(8) numKeytokens_;
+      if ( (keylen & 7) == 0 ) begin
+         numKeytokens_ = tpl_1(d) >> 3;
+      end
+      else begin
+         numKeytokens_ = (tpl_1(d) >> 3) + 1;
+      end
+      respCnt_key <= reqCnt_key_;
+      
+      numKeytokens <= numKeytokens_;
+      reqCnt_key_wr <= numKeytokens_;
+      respCnt_key_wr <= reqCnt_key_;
+      numKeys <= numKeytokens_;
+      
+      first_key_wr <= True;
       keylen_static <= tpl_1(d);
               
-      headerCnt <= fromInteger(valueOf(HeaderSz));
-      dataFifoPtr <= fromInteger(valueOf(LnSz4Key));
-      keyBufPtr <= 64;//fromInteger(valueOf(LineWidth));//
-      
-      keyBuf_wp <= 0;
-      keyBuf_rp <= fromInteger(valueOf(TSub#(TDiv#(LnSz4Key,64),1)));
-      
-      keyBuf_rc <= fromInteger(valueOf(TDiv#(LnSz4Key,64)));
-      
-      firstKeyCnt <= fromInteger(valueOf(LnSz4Key));
-      
-      wrHeaderPtr <= fromInteger(valueOf(HeaderSz));
       cacheHit <= True;
       
-      
-      keyPtr <= fromInteger(valueOf(KeyShiftSz));
-      linePtr <= fromInteger(valueOf(LineWidth));
       
       time_now <= real_clk.get_time();
       
       state <= ProcHeader;
+      header_cmd <= True;
+      key_cmd <= True;
+      //wr_header_cmd <= True;
+      wr_key_cmd <= True;
    endrule
    
-   rule driveRd_header (state == ProcHeader && reqCnt_header > 0);//(reqCnt > 0);
-      $display("Sending ReadReq for Header, rdAddr = %d", rdAddr);
-      dram.readReq(rdAddr,64);
-      rdAddr <= rdAddr + 64;
-      reqCnt_header <= reqCnt_header - 1;
+   rule driveRd_header (state == ProcHeader && reqCnt_hdr > 0);//(reqCnt > 0);
+      $display("Sending ReadReq for Header, rdAddr_hdr = %d", rdAddr_hdr);
+      dram.readReq(rdAddr_hdr,64);
+      rdAddr_hdr <= rdAddr_hdr + 64;
+      reqCnt_hdr <= reqCnt_hdr - 1;
    endrule
    
    rule recvRd if (state != Idle);// if (recCnt > 0);
@@ -284,173 +298,112 @@ module mkAssocHashtb#(DRAMControllerIfc dram, Clk_ifc real_clk, ValAlloc_ifc val
       dataFifo.enq(data);
    endrule
    
-   rule procHeader ( state == ProcHeader);//&& reqCnt_header == 0);
-      $display("Second Stage: Read and Process Header, newData = %h", dataFifo.first);
-      let prevData = headerBuf;
-      Vector#(NumWays, Bit#(LineWidth)) newData = unpack(dataFifo.first);
-      Vector#(NumWays, ItemHeader) nextData = newVector();
-      
-      Vector#(NumWays, Bit#(LineWidth)) dataFifo_temp = newVector();
-           
-      Bit#(32) shiftSz = fromInteger(valueOf(LineWidth));
-      
+   
+   Vector#(NumWays, DepacketIfc#(128, HeaderSz, 0)) depacketEngs_hdr <- replicateM(mkDepacketEngine());
+   
+   rule procHeader (state == ProcHeader && header_cmd);
+      for (Integer i = 0; i < valueOf(NumWays); i=i+1) begin
+         depacketEngs_hdr[i].start(1, fromInteger(valueOf(HeaderTokens)));
+      end
+      header_cmd <= False;
+   endrule
+   
+   rule procHeader_2 (state == ProcHeader && respCnt_hdr > 0);
+      let v <- toGet(dataFifo).get();
+      Vector#(NumWays, Bit#(LineWidth)) vector_v = unpack(v);
+      for (Integer i = 0; i < valueOf(NumWays); i=i+1) begin
+         depacketEngs_hdr[i].inPipe.put(vector_v[i]);
+      end
+      respCnt_hdr <= respCnt_hdr - 1;
+   endrule
+   
+   rule procHeader_3 (state == ProcHeader);
+      Vector#(NumWays, ItemHeader) headers;
       Bit#(NumWays) cmpMask_temp = 0;
       Bit#(NumWays) idleMask_temp = 0;
       
-      if ( headerCnt <= fromInteger(valueOf(LineWidth)) ) begin
-         shiftSz = fromInteger(valueOf(HeaderResidualSz));//headerCnt;
-      end
-      
-      Bool lastToken = (headerCnt <= fromInteger(valueOf(LineWidth)));
-      
-      // shift data in to headerBuf;
-      for (Integer i = 0; i < valueOf(NumWays); i = i+1) begin
-         
-         if ( lastToken ) begin
-            nextData[i] = unpack((pack(prevData[i]) << shiftSz) | zeroExtend(newData[i]>>valueOf(LnSz4Key)));//[valueOf(TSub#(LineWidth,1)):valueOf(TSub#(LineWidth,HeaderResidualSz))]));
-            dataFifo_temp[i] = newData[i] << valueOf(HeaderResidualSz);
+      for (Integer i = 0; i < valueOf(NumWays); i=i+1) begin
+         let v_ <- depacketEngs_hdr[i].outPipe.get;
+         ItemHeader v = unpack(v_);
+         headers[i] = v;
+         if (v.idle != 0 ) begin
+            idleMask_temp[i] = 1;
          end
-         else begin
-            nextData[i] = unpack((pack(prevData[i]) << shiftSz) | zeroExtend(newData[i]));
-         end
-         
-         // if it is the last token of the header buffer;
-         if ( lastToken ) begin
-            
-            if ( nextData[i].idle != 0 ) begin
-               idleMask_temp[i] = 1;
-            end
-            else if ( nextData[i].keylen == keyLen_rd ) begin
-               cmpMask_temp[i] = 1;
-            end
+         else if (v.keylen == keyLen_rd ) begin
+            cmpMask_temp[i] = 1;
          end
       end
       
-      if ( lastToken ) begin
-         
-         $display("HeaderBuf = %h, prevData = %h", nextData, prevData);
-         
-         headerCnt <= 0;
-         cmpMask <= cmpMask_temp;
-         idleMask <= idleMask_temp;
-         
-         dataFifoBuf <= pack(dataFifo_temp);
-         
-         $display("cmpMask = %b, idleMask = %b", cmpMask_temp, idleMask_temp);
-         if (cmpMask_temp == 0) begin
-            state <= ProcData;//PrepWrite; //TODO:: State should be directed to write table
-         end
-         else begin
-            state <= ProcData;
-         end
+      cmpMask <= cmpMask_temp;
+      idleMask <= idleMask_temp;
+      headerBuf <= headers;      
+      
+      $display("cmpMask = %b, idleMask = %b", cmpMask_temp, idleMask_temp);
+      if (cmpMask_temp == 0) begin
+         state <= ProcData;//PrepWrite; //TODO:: State should be directed to write table
       end
       else begin
-         headerCnt <= headerCnt - fromInteger(valueOf(LineWidth));
+         state <= ProcData;
       end
-      dataFifo.deq();
-      headerBuf <= nextData;
+      
+      if ( valueOf(HeaderSz)%valueOf(LineWidth) == 0) begin
+         rdAddr_key <= rdAddr_hdr;
+      end
+      else begin
+         rdAddr_key <= rdAddr_hdr - 64;
+      end
+      
+      
    endrule
    
-   rule driveRd_data (state == ProcData && reqCnt_data > 0);//(reqCnt > 0);
-      $display("Sending ReadReq for Data, rdAddr = %d", rdAddr);
-      dram.readReq(rdAddr,64);
-      rdAddr <= rdAddr + 64;
-      reqCnt_data <= reqCnt_data - 1;
+   rule driveRd_data (state == ProcData && reqCnt_key > 0);//(reqCnt > 0);
+      $display("Sending ReadReq for Data, rdAddr_key = %d", rdAddr_key);
+      dram.readReq(rdAddr_key,64);
+      rdAddr_key <= rdAddr_key + 64;
+      reqCnt_key <= reqCnt_key - 1;
    endrule
    
-   rule procData (state == ProcData );// if ( headerCnt == 0 ); //TODO:: Fire condition has to be added
-      $display("Third Stage: ProcData");
-      //if ( keyLen > 0 ) begin
-      Vector#(NumWays, Bit#(LineWidth)) data = unpack(dataFifoBuf);
-      Vector#(NumWays, Bit#(LineWidth)) nextData = newVector();
-      
-      Vector#(NumWays, Bit#(64)) nextTokenBuf = newVector();
-      
+   Vector#(NumWays, PacketIfc#(64, LineWidth, HeaderRemainderSz)) packetEngs_key <- replicateM(mkPacketEngine());
+ 
+   rule procData (state == ProcData && key_cmd);
+      for (Integer i = 0; i < valueOf(NumWays); i=i+1) begin
+         packetEngs_key[i].start(extend(numBufs), extend(numKeytokens));
+      end
+      key_cmd <= False;
+   endrule
+   
+   rule procData_2 (state == ProcData && respCnt_key > 0);
+      let v <- toGet(dataFifo).get();
+      $display("put data in to packetEngs");
+      Vector#(NumWays, Bit#(LineWidth)) vector_v = unpack(v);
+      for (Integer i = 0; i < valueOf(NumWays); i=i+1) begin
+         packetEngs_key[i].inPipe.put(vector_v[i]);
+      end
+      respCnt_key <= respCnt_key - 1;
+   endrule
+   
+   rule procData_3 (state == ProcData);
       Bit#(NumWays) cmpMask_temp = cmpMask;
-      $display("keyBufPtr = %d, dataFifoPtr = %d", keyBufPtr, dataFifoPtr);
-      $display("dataFifoBuf = %h", dataFifoBuf);
-      let newKeytokens = keyTks.first();
-      if (zeroExtend(keyBufPtr) > dataFifoPtr) begin
-         /* draining dataFifoBuf */
-         for (Integer i = 0; i < valueOf(NumWays); i = i+1) begin
-            //nextTokenBuf[i] = (tokenBuf[i] << valueOf(DtaShiftSz)) | zeroExtend(pack(data[i])[valueOf(TSub#(LineWidth,1)): valueOf(TSub#(LineWidth,DtaShiftSz))]);
-            nextTokenBuf[i] = (tokenBuf[i] << valueOf(DtaShiftSz)) | zeroExtend(data[i] >> valueOf(TSub#(LineWidth,DtaShiftSz)));//[valueOf(TSub#(LineWidth,1)): valueOf(TSub#(LineWidth,DtaShiftSz))]);
-         end
-         keyBufPtr <= keyBufPtr - truncate(dataFifoPtr);
-         
-         
-         dataFifoPtr <= fromInteger(valueOf(LineWidth));
-         
-         if ({keyLen_rd,3'b0} >= extend(dataFifoPtr)) begin
-            dataFifoBuf <= dataFifo.first();
-            dataFifo.deq();
-         end
-         else begin
-            dataFifoBuf <= 0;
-         end
-         
-         tokenBuf <= nextTokenBuf;
-      end
-      else begin// if (keyBufPtr <= dataFifoPtr) begin
-         /* draining keyTokenBuff */
-         
-         for (Integer i = 0; i < valueOf(NumWays); i = i+1) begin
-            if ( keyBufPtr == 64 ) begin
-               nextTokenBuf[i] = (tokenBuf[i] << 64) | zeroExtend(data[i] >> valueOf(TSub#(LineWidth, 64)));//[valueOf(TSub#(LineWidth,1)): valueOf(TSub#(LineWidth, 64))]);
-               nextData[i] = data[i] << 64;
-            end
-            else begin
-               nextTokenBuf[i] = (tokenBuf[i] << valueOf(KeyShiftSz)) | zeroExtend(data[i] >> valueOf(TSub#(LineWidth,KeyShiftSz)));//[valueOf(TSub#(LineWidth,1)): valueOf(TSub#(LineWidth, KeyShiftSz))]);   
-               nextData[i] = data[i] << valueOf(KeyShiftSz);
-            end
-         end
-         
-         $display("ProcData: tokens = %h << %d", tokenBuf, valueOf(KeyShiftSz));
-         $display("ProcData: data = %h", dataFifoBuf);
-         $display("ProcData: nexttokens = %h",nextTokenBuf);
-         
-         for (Integer i = 0; i < valueOf(NumWays); i = i+1) begin
-            if (cmpMask[i] == 1 && nextTokenBuf[i] != newKeytokens) begin 
+      if (numKeys > 0) begin
+         let keyToken <- toGet(keyTks).get();
+         $display("Comparing keys, keytoken == %h", keyToken);
+         keyBuf.enq(keyToken);
+     
+         for (Integer i = 0; i < valueOf(NumWays); i=i+1) begin
+            let key <- packetEngs_key[i].outPipe.get();
+            if ( cmpMask[i] == 1 && key != keyToken ) begin
                cmpMask_temp[i] = 0;
             end
          end
-         
-         $display("After Data Cmp, cmpMask = %b", cmpMask_temp);
-         cmpMask <= cmpMask_temp;
-         
-         if (keyLen_rd > 8) begin
-            keyLen_rd <= keyLen_rd - 8;
-         end
-         else begin
-            keyLen_rd <= 0;
-            state <= PrepWrite_0;
-            //dataFifo.deq(); // remaining input has to be flushed
-         end
-         keyBufPtr <= 64;
-         dataFifoPtr <= dataFifoPtr - zeroExtend(keyBufPtr);
-         dataFifoBuf <= pack(nextData);
-         
-         keyBuf.portA.request.put(BRAMRequest{write: True,
-                                              responseOnWrite: False,
-                                              address: truncate(keyBuf_wp),
-                                              datain: newKeytokens});
-         keyBuf_wp <= keyBuf_wp + 1;
-         
-         if (firstKeyCnt >= 64) begin
-            firstKeyLn <= firstKeyLn << 64 | truncate(newKeytokens);
-            firstKeyCnt <= firstKeyCnt - 64;
-         end
-         else if ( firstKeyCnt > 0) begin
-            $display("keyToken = %h",newKeytokens);
-            firstKeyLn <= (firstKeyLn << valueOf(DtaShiftSz)) | truncate(newKeytokens>>valueOf(KeyShiftSz));//[63:valueOf(TSub#(64,DtaShiftSz))]);
-            firstKeyCnt <= 0;
-         end
-         
-         keyTks.deq();
       end
-
+      else begin
+         state <= PrepWrite_0;
+      end
+      numKeys <= numKeys - 1;
+      cmpMask <= cmpMask_temp;
    endrule
-   
+      
+   PacketIfc#(LineWidth, HeaderSz, 0) packetEng_hdr <- mkPacketEngine(); 
    rule prepWrite_0 (state == PrepWrite_0);
       $display("Fourth Stage: PrepWrite");      
       Bit#(TLog#(NumWays)) ind;
@@ -471,14 +424,13 @@ module mkAssocHashtb#(DRAMControllerIfc dram, Clk_ifc real_clk, ValAlloc_ifc val
          
          valAddrFifo.enq(tuple2(old_header[ind].valAddr, old_header[ind].nBytes));
          newHeader <= old_header[ind];
-            
+         packetEng_hdr.start(1, fromInteger(valueOf(HeaderTokens)));
       end
       else begin
          Bool trade_in = False;
          if ( idleMask != 0 ) begin
             ind = mask2ind(idleMask);
             $display("Foruth Stage: idleMask = %b, ind = %d", idleMask, ind);
- //           trade_in = False;
          end
          else begin
             // choose the smallest time stamp, and update the header and the key;
@@ -500,7 +452,7 @@ module mkAssocHashtb#(DRAMControllerIfc dram, Clk_ifc real_clk, ValAlloc_ifc val
       wrAddr <= wrAddr + (zeroExtend(ind) << valueOf(LgLineBytes));
       
    endrule
-   
+
    rule prepWrite_1 (state == PrepWrite_1);
       //$display("%h",old_header[ind]);
       let newValAddr <- valAlloc.newAddrResp();
@@ -513,119 +465,77 @@ module mkAssocHashtb#(DRAMControllerIfc dram, Clk_ifc real_clk, ValAlloc_ifc val
                                currtime : time_now,// last accessed time
                                nBytes : reg_nBytes //
                                };
-      //header_Buf <= old_header;
       valAddrFifo.enq(tuple2(newValAddr, reg_nBytes));
-      //newHeader <= old_header[ind];
-      //wrAddr <= wrAddr + (zeroExtend(ind) << valueOf(LgLineBytes));
-      
       
       state <= WriteHeader;
+      packetEng_hdr.start(1, fromInteger(valueOf(HeaderTokens)));
+   endrule
+
+
+   
+   rule writeHeader_1 (state == WriteHeader && reqCnt_hdr_wr > 0);
+      packetEng_hdr.inPipe.put(pack(newHeader));
+      reqCnt_hdr_wr <= reqCnt_hdr_wr - 1;
    endrule
    
-   rule writeHeader (state == WriteHeader);
-      $display("Fifth Stage: WriteHeader");
-      $display("newHeader = %h", newHeader);
-      Bit#(LineWidth) wrVal = ?;
+   rule writeHeader_2 (state == WriteHeader);
+      let wrVal <- packetEng_hdr.outPipe.get();
       Bit#(7) numOfBytes = fromInteger(valueOf(LineBytes));
-            
-      if ( wrHeaderPtr > fromInteger(valueOf(LineWidth)) )  begin 
-         wrVal =  pack(newHeader)[valueOf(TSub#(HeaderSz,1)): valueOf(TSub#(HeaderSz,LineWidth))];
-         //numOfBytes = fromInteger(valueOf(LineBytes));
-         //wrAddr <= wrAddr + 64'h8;
-         wrHeaderPtr <= wrHeaderPtr - fromInteger(valueOf(LineWidth));
+      
+      if (respCnt_hdr_wr > 1) begin
+         wrAddr <= wrAddr + 64;
       end
       else begin
-         //wrVal = pack(newHeader)[valueOf(TSub#(HeaderSz,1)): valueOf(TSub#(HeaderSz,HeaderResidualSz))];
-         wrVal = {pack(newHeader)[valueOf(TSub#(HeaderSz,1)): valueOf(TSub#(HeaderSz,HeaderResidualSz))],firstKeyLn};
-         //numOfBytes = fromInteger(valueOf(HeaderResidualBytes));
-         //wrAddr <= wrAddr + fromInteger(valueOf(HeaderResiduleBytes));
-         wrHeaderPtr <= 0;
+         numOfBytes = fromInteger(valueOf(HeaderRemainderBytes));
          if (cacheHit) begin
             $display("Go to Idle");
             state <= Idle;
+            keyBuf.clear();
          end
          else begin
-            $display("Go to WriteKeys, keyBuf_rp = %d, keyBuf_wp = %d", keyBuf_rp, keyBuf_wp);
             state <= WriteKeys;
          end
       end
-      newHeader <= unpack(pack(newHeader) << valueOf(LineWidth));
-      wrAddr <= wrAddr + 64;
+         
+      respCnt_hdr_wr <= respCnt_hdr_wr - 1;
       $display("wrAddr = %d, wrVal = %h, bytes = %d", wrAddr, wrVal, numOfBytes);
       dram.write(wrAddr,zeroExtend(wrVal), numOfBytes);
    endrule
+
+   DepacketIfc#(64, LineWidth, HeaderRemainderSz) depacketEng_key <- mkDepacketEngine();
    
-   rule driveRdKeys (state == WriteKeys && keyBuf_rp < keyBuf_wp);
-      $display("Read Key from BRAM: keyBuf_rp = %d, keyBuf_wp = %d", keyBuf_rp, keyBuf_wp);
-      keyBuf.portB.request.put(BRAMRequest{write: False,
-                                           responseOnWrite: False,
-                                           address: truncate(keyBuf_rp),
-                                           datain: 0});
-      keyBuf_rp <= keyBuf_rp + 1;
+   rule writeKeys_0 (state == WriteKeys && wr_key_cmd);
+      wr_key_cmd <= False;
+      depacketEng_key.start(extend(numBufs), extend(numKeytokens));
    endrule
    
-   
-   rule recvKeys;
-      let keyTk <- keyBuf.portB.response.get;
-      recvKeyFifo.enq(keyTk);
+   rule writeKeys_1 (state == WriteKeys && reqCnt_key_wr > 0);
+      $display("put keytokens in to depacket inpipe");
+      let v <- toGet(keyBuf).get();
+      depacketEng_key.inPipe.put(v);
+      reqCnt_key_wr <= reqCnt_key_wr - 1;
    endrule
  
-   rule writeKeys (state == WriteKeys);
-      $display("Last Stage: WriteKeys");
-      //let keyTk <- keyBuf.portB.response.get;
-      let keyTk = recvKeyFifo.first;
-      
-      let tempLine = lineBuf;
-      
-      if (keyPtr > linePtr) begin
-         /* draining lineBuf */
-         let wrData = (tempLine << valueOf(DtaShiftSz)) | (keyTk >> valueOf(KeyShiftSz));//zeroExtend(keyTk[64:valueOf(TSub#(64,DtaShiftSz))]);
-         //let wrData = {tempLine[valueOf(TSub#(TSub#(LineWidth,DtaShiftSz),1)):0], keyTk[63:valueOf(TSub#(64,DtaShiftSz))]};
-         dram.write(wrAddr, zeroExtend(wrData), fromInteger(valueOf(LineBytes)));
-         //dram.write(wrAddr, zeroExtend({tempLine[valueOf(TSub#(TSub#(LineWidth,DtaShiftSz),1)):0], keyTk[63:valueOf(TSub#(64,DtaShiftSz))]}), fromInteger(valueOf(LineBytes)));
-         if ( keyLen_wr <= zeroExtend(linePtr>>3)) begin
-            state <= Idle;
-            recvKeyFifo.deq();
-         end
-            
-         wrAddr <= wrAddr + 64;
-         keyPtr <= keyPtr - linePtr;
-         linePtr <= fromInteger(valueOf(LineWidth));
-      end
-      else begin// if (keyPtr <= linePtr) begin
-         /* draining keyBuf */
-         
-         if (keyPtr == 64) begin
-            tempLine = tempLine << 64 | keyTk;//{tempLine[valueOf(TSub#(LineWidth,65)): 0], keyTk};
-            //tempLine = {tempLine[valueOf(TSub#(LineWidth,65)): 0], keyTk};
+   rule writeKeys_2 (state == WriteKeys);
+      if (respCnt_key_wr > 0) begin
+         let v <- depacketEng_key.outPipe.get();
+         if (first_key_wr) begin
+            $display("wrAddr = %d, wrVal = %h, bytes = %d", wrAddr + fromInteger(valueOf(HeaderRemainderBytes)), v, fromInteger(valueOf(HeaderResidualBytes)));
+            dram.write(wrAddr + fromInteger(valueOf(HeaderRemainderBytes)), zeroExtend(v)>>fromInteger(valueOf(HeaderRemainderSz)), fromInteger(valueOf(HeaderResidualBytes)));
+            first_key_wr <= False;
          end
          else begin
-            tempLine = (tempLine << valueOf(KeyShiftSz)) | (keyTk & fromInteger(valueOf(TSub#(TExp#(KeyShiftSz),1))) );//zeroExtend(keyTk[valueOf(TSub#(KeyShiftSz,1)):0]);//{tempLine[31:0], keyTk[31:0]};
-    //        tempLine = {tempLine[valueOf(TSub#(TSub#(LineWidth,KeyShiftSz),1)):0], keyTk[valueOf(TSub#(KeyShiftSz,1)):0]};
-         end
-         
-         keyPtr <= 64;
-         linePtr <= linePtr - keyPtr;
-         recvKeyFifo.deq();
-         lineBuf <= tempLine;
-         
-         $display("keyBuf_rc = %d, keyBuf_wp = %d", keyBuf_rc, keyBuf_wp);        
-         //if ( keyBuf_rc < keyBuf_wp) begin
-         //   keyBuf_rc <= keyBuf_rc + 1;
-         if ( keyLen_wr > 8 ) begin
-            keyLen_wr <= keyLen_wr - 8;
-         end
-         else begin
-            $display("Last Stage: go back to Idle");
-            $display("wrAddr = %d, wrVal = %h, bytes = %d", wrAddr, tempLine << (linePtr-keyPtr), fromInteger(valueOf(LineBytes)));
-            dram.write(wrAddr,zeroExtend(tempLine << (linePtr-keyPtr)), fromInteger(valueOf(LineBytes)));//(fromInteger(valueOf(LineWidth)) - linePtr + keyPtr)>>3);
-            keyLen_wr <= 0;
-            state <= Idle;
+            $display("wrAddr = %d, wrVal = %h, bytes = %d", wrAddr, v, fromInteger(valueOf(LineBytes)));
+            dram.write(wrAddr, zeroExtend(v), fromInteger(valueOf(LineBytes)));
          end
       end
-      
+      else begin
+         $display("Going back to Idle");
+         state <= Idle;
+      end
+      wrAddr <= wrAddr + 64;
+      respCnt_key_wr <= respCnt_key_wr  -  1;
    endrule
-   
       
    method Action readTable(Bit#(8) keylen, Bit#(32) hv, Bit#(64) nBytes);
       $display("Hashtable Request Received");
@@ -634,8 +544,9 @@ module mkAssocHashtb#(DRAMControllerIfc dram, Clk_ifc real_clk, ValAlloc_ifc val
    
    method Action keyTokens(Bit#(64) keys);
       $display("Hashtable keytoken received");
-      Vector#(8, Bit#(8)) byteVec = unpack(keys);
-      keyTks.enq(pack(reverse(byteVec)));
+      //Vector#(8, Bit#(8)) byteVec = unpack(keys);
+      //keyTks.enq(pack(reverse(byteVec)));
+      keyTks.enq(keys);
    endmethod
    
    method ActionValue#(Tuple2#(Bit#(64), Bit#(64))) getValAddr();
