@@ -1,5 +1,6 @@
 import GetPut::*;
 import ClientServer::*;
+import Connectable::*;
 
 import PortalMemory::*;
 import MemTypes::*;
@@ -39,17 +40,23 @@ module mkDMAReader#(Server#(MemengineCmd,Bool) rServer,
 
    FIFO#(Bit#(64)) respDtaQ <- mkFIFO;
    
+   FIFO#(MemengineCmd) serverReqFifo <- mkFIFO;
+   
+   mkConnection(toGet(serverReqFifo), rServer.request);
+   
    rule drive_read if (busy && burstCnt <= numBursts);
       $display("drRdRq: burstCnt = %d, numBursts = %d", burstCnt, numBursts);
       if ( burstCnt == numBursts ) begin
          if ( lastBurstSz != 0) begin
             $display("Last request");
-            rServer.request.put(MemengineCmd{sglId:buffPtr, base:extend(burstCnt<<7), len:truncate(lastBurstSz), burstLen:truncate(lastBurstSz)});
+            //rServer.request.put(MemengineCmd{sglId:buffPtr, base:extend(burstCnt<<7), len:truncate(lastBurstSz), burstLen:truncate(lastBurstSz)});
+            serverReqFifo.enq(MemengineCmd{sglId:buffPtr, base:extend(burstCnt<<7), len:truncate(lastBurstSz), burstLen:truncate(lastBurstSz)});
          end
       end
       else begin
          $display("Normal request");
-         rServer.request.put(MemengineCmd{sglId:buffPtr, base:extend(burstCnt<<7), len:128, burstLen:128});
+        // rServer.request.put(MemengineCmd{sglId:buffPtr, base:extend(burstCnt<<7), len:128, burstLen:128});
+         serverReqFifo.enq(MemengineCmd{sglId:buffPtr, base:extend(burstCnt<<7), len:128, burstLen:128});
       end
       burstCnt <= burstCnt + 1;
    endrule
@@ -121,18 +128,25 @@ module mkDMAWriter#(Server#(MemengineCmd,Bool) wServer,
    FIFO#(Bit#(64)) reqDtaQ <- mkFIFO;
    FIFO#(Bool) doneQ <- mkFIFO;
    
+   FIFO#(MemengineCmd) serverReqFifo <- mkFIFO;
+   
+   mkConnection(toGet(serverReqFifo), wServer.request);
+   
    rule drive_write if (busy && burstCnt <= numBursts);
+      
       
       $display("drWrRq: burstCnt = %d, numBursts = %d", burstCnt, numBursts);
       if ( burstCnt == numBursts ) begin
          if ( lastBurstSz != 0) begin
             $display("Last request");
-            wServer.request.put(MemengineCmd{sglId:buffPtr, base:extend(burstCnt<<7), len:truncate(lastBurstSz), burstLen:truncate(lastBurstSz)});
+            //wServer.request.put(MemengineCmd{sglId:buffPtr, base:extend(burstCnt<<7), len:truncate(lastBurstSz), burstLen:truncate(lastBurstSz)});
+            serverReqFifo.enq(MemengineCmd{sglId:buffPtr, base:extend(burstCnt<<7), len:truncate(lastBurstSz), burstLen:truncate(lastBurstSz)});
          end
       end
       else begin
          $display("Normal request");
-         wServer.request.put(MemengineCmd{sglId:buffPtr, base:extend(burstCnt<<7), len:128, burstLen:128});
+         //wServer.request.put(MemengineCmd{sglId:buffPtr, base:extend(burstCnt<<7), len:128, burstLen:128});
+         serverReqFifo.enq(MemengineCmd{sglId:buffPtr, base:extend(burstCnt<<7), len:128, burstLen:128});
       end
       burstCnt <= burstCnt + 1;
    endrule

@@ -45,7 +45,8 @@ typedef struct {
 
 
 interface ServerIndication;
-   method Action done(Response_Header resp);
+   //method Action releaseSrcBuffer(Bit#(32) id);
+   method Action done(Response_Header resp, Bit#(32) id);
    //method Action hexdump(Bit#(32) v);
 endinterface
 
@@ -55,7 +56,7 @@ interface ServerRequest;
    method Action initAddrDelimit(Bit#(64) lgOffset1, Bit#(64) lgOffset2, Bit#(64) lgOffset3);
    
    /*** cmd key dta request ***/
-   method Action start(Request_Header cmd, Bit#(32) rp, Bit#(32) wp, Bit#(64) nBytes);
+   method Action start(Request_Header cmd, Bit#(32) rp, Bit#(32) wp, Bit#(64) nBytes, Bit#(32) id);
 endinterface
 
 
@@ -74,9 +75,10 @@ module mkServerRequest#(ServerIndication indication, DRAMControllerIfc dram)(Ser
    let dmaReader <- mkDMAReader(re.readServers[0], re.dataPipes[0]);
    let dmaWriter <- mkDMAWriter(we.writeServers[0], we.dataPipes[0]);
    
+   Reg#(Bit#(32)) id_reg <- mkRegU();
    Reg#(Bit#(32)) wp_reg <- mkRegU();
    
-   let memcached <- mkMemCached(dram, dmaWriter, wp_reg);
+   let memcached <- mkMemCached(dram, dmaReader, dmaWriter);
   
    
    
@@ -88,18 +90,20 @@ module mkServerRequest#(ServerIndication indication, DRAMControllerIfc dram)(Ser
       //dmaWriter.done();
       let v <- memcached.done();
       //Protocol_Binary_Response_Header v = unpack(d);
-      if (v.opcode == PROTOCOL_BINARY_CMD_GET)
-         dmaWriter.done();
-      $display("Memcached sends back indication: opcode = %d", v.opcode);
-      indication.done(unpack(pack(v)));
+      let header = tpl_1(v);
+      let id = tpl_2(v);
+      $display("Memcached sends back indication: opcode = %d", header.opcode);
+     
+      indication.done(unpack(pack(header)), id);
    endrule
    
    interface ServerRequest request;
-      method Action start(Request_Header cmd, Bit#(32) rp, Bit#(32) wp, Bit#(64) nBytes);
-         $display("Server start processing rp = %d, wp = %d, nBytes = %d", rp, wp, nBytes);
-         memcached.start(unpack(pack(cmd)));
-         dmaReader.readReq(rp, nBytes);
-         wp_reg <= wp;
+      method Action start(Request_Header cmd, Bit#(32) rp, Bit#(32) wp, Bit#(64) nBytes, Bit#(32) id);
+         $display("Server start processing rp = %d, wp = %d, nBytes = %d, id = %d", rp, wp, nBytes, id);
+         memcached.start(unpack(pack(cmd)), rp, wp, nBytes, id);
+         //dmaReader.readReq(rp, nBytes);
+         //wp_reg <= wp;
+         //id_reg <= id;
       endmethod
       
       method Action initValDelimit(Bit#(64) lgSz1, Bit#(64) lgSz2, Bit#(64) lgSz3);

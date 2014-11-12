@@ -30,8 +30,10 @@ endinterface
          
 
 interface MemCachedIfc;
-   method Action start(Protocol_Binary_Request_Header cmd);
-   method ActionValue#(Protocol_Binary_Response_Header) done();
+   //method Action start(Protocol_Binary_Request_Header cmd);
+   method Action start(Protocol_Binary_Request_Header cmd, Bit#(32) rp, Bit#(32) wp, Bit#(64) nBytes, Bit#(32) id);
+   //method ActionValue#(Protocol_Binary_Response_Header) done();
+   method ActionValue#(Tuple2#(Protocol_Binary_Response_Header,Bit#(32))) done();
    //method Action start(Bit#(ReqHeaderSz) cmd);
    //method ActionValue#(Bit#(RespHeaderSz)) done();
    interface MemServerIfc server;
@@ -39,11 +41,11 @@ interface MemCachedIfc;
    interface ValInit_ifc valInit;
 endinterface
 
-module mkMemCached#(DRAMControllerIfc dram, DMAWriteIfc wrIfc, Reg#(Bit#(32)) wp)(MemCachedIfc);
+module mkMemCached#(DRAMControllerIfc dram, DMAReadIfc rdIfc, DMAWriteIfc wrIfc)(MemCachedIfc);
    
    
    /*****input streaming processing******/
-   FIFO#(Protocol_Binary_Request_Header) reqHeaderQ <- mkFIFO();
+   FIFO#(Tuple3#(Protocol_Binary_Request_Header, Bit#(32), Bit#(32))) reqHeaderQ <- mkFIFO();
    FIFO#(Bit#(64)) reqs <- mkFIFO;
    FIFO#(Bit#(64)) resps <- mkFIFO;
    
@@ -59,15 +61,18 @@ module mkMemCached#(DRAMControllerIfc dram, DMAWriteIfc wrIfc, Reg#(Bit#(32)) wp
    
    
    
-   FIFO#(Protocol_Binary_Request_Header) cmd2hash <- mkFIFO();
+   FIFO#(Tuple3#(Protocol_Binary_Request_Header, Bit#(32), Bit#(32))) cmd2hash <- mkFIFO();
    FIFO#(Bit#(64)) keyFifo <- mkFIFO;
    FIFO#(Bit#(64)) valFifo <- mkFIFO;
 
    rule procHeader if (state_input == Idle);
-      let header <- toGet(reqHeaderQ).get();
+      let v <- toGet(reqHeaderQ).get();
+      
+      let header = tpl_1(v);
+      
       state_input <= ProcKeys;
          
-      cmd2hash.enq(header);
+      cmd2hash.enq(v);
       
       let keylen = header.keylen;
       
@@ -121,14 +126,15 @@ module mkMemCached#(DRAMControllerIfc dram, DMAWriteIfc wrIfc, Reg#(Bit#(32)) wp
    FIFO#(Bit#(64)) keyBuf <- mkSizedBRAMFIFO(32);
    
    
-   FIFO#(Protocol_Binary_Request_Header) hash2table <- mkFIFO;
-   FIFO#(Protocol_Binary_Request_Header) table2valstr <- mkFIFO;
+   FIFO#(Tuple3#(Protocol_Binary_Request_Header, Bit#(32), Bit#(32))) hash2table <- mkFIFO;
+   FIFO#(Tuple3#(Protocol_Binary_Request_Header, Bit#(32), Bit#(32))) table2valstr <- mkFIFO;
    
    rule doHash;
-      let cmd <- toGet(cmd2hash).get();
+      let v <- toGet(cmd2hash).get();
+      let cmd = tpl_1(v);
       let keylen = cmd.keylen;
       hash.start(extend(keylen));
-      hash2table.enq(cmd);
+      hash2table.enq(v);
    endrule
    
    rule key2Hash;
@@ -139,9 +145,10 @@ module mkMemCached#(DRAMControllerIfc dram, DMAWriteIfc wrIfc, Reg#(Bit#(32)) wp
    endrule
    
    rule doTable;
-      let cmd <- toGet(hash2table).get();
+      let v <- toGet(hash2table).get();
+      let cmd = tpl_1(v);
       
-      table2valstr.enq(cmd);
+      table2valstr.enq(v);
       
       let keylen = cmd.keylen;
       let nBytes = cmd.bodylen - extend(cmd.keylen);
@@ -157,11 +164,14 @@ module mkMemCached#(DRAMControllerIfc dram, DMAWriteIfc wrIfc, Reg#(Bit#(32)) wp
    endrule
    
    
-   FIFO#(Protocol_Binary_Response_Header) respHeaderQ <- mkFIFO;
+   FIFO#(Tuple2#(Protocol_Binary_Response_Header, Bit#(32))) respHeaderQ <- mkFIFO;
    FIFO#(Bit#(64)) respDataQ <- mkFIFO;
       
    rule doVal;
-      let cmd <- toGet(table2valstr).get();
+      let vv <- toGet(table2valstr).get();
+      let cmd = tpl_1(vv);
+      let wp = tpl_2(vv);
+      let id = tpl_3(vv);
       
       let opcode = cmd.opcode;
       let v <- htable.getValAddr();
@@ -182,16 +192,16 @@ module mkMemCached#(DRAMControllerIfc dram, DMAWriteIfc wrIfc, Reg#(Bit#(32)) wp
          //wrIfc.writeReq(wp,);
       end 
       
-      respHeaderQ.enq(Protocol_Binary_Response_Header{magic: PROTOCOL_BINARY_RES,
-                                                     opcode: cmd.opcode,
-                                                     keylen: 0,
-                                                     extlen: 0,
-                                                     datatype: 0,
-                                                     status: PROTOCOL_BINARY_RESPONSE_SUCCESS,
-                                                     bodylen: truncate(nBytes),
-                                                     opaque: 0,
-                                                     cas: 0
-                                                     });
+      respHeaderQ.enq(tuple2(Protocol_Binary_Response_Header{magic: PROTOCOL_BINARY_RES,
+                                                             opcode: cmd.opcode,
+                                                             keylen: 0,
+                                                             extlen: 0,
+                                                             datatype: 0,
+                                                             status: PROTOCOL_BINARY_RESPONSE_SUCCESS,
+                                                             bodylen: truncate(nBytes),
+                                                             opaque: 0,
+                                                             cas: 0
+                                                             },id));
       
    endrule
    
@@ -214,17 +224,18 @@ module mkMemCached#(DRAMControllerIfc dram, DMAWriteIfc wrIfc, Reg#(Bit#(32)) wp
    Reg#(Bit#(64)) val_cnt_Resp <- mkReg(0);
 
 
-   FIFO#(Protocol_Binary_Response_Header) doneQ <- mkFIFO();
+   FIFO#(Tuple2#(Protocol_Binary_Response_Header, Bit#(32))) doneQ <- mkFIFO();
    rule idle_resp if (state_output == Idle);
       
       let v <- toGet(respHeaderQ).get();
-      $display("Process output, state == Idle, opcode = %h", v.opcode);
+      let cmd = tpl_1(v);
+      $display("Process output, state == Idle, opcode = %h", cmd.opcode);
       doneQ.enq(v);
-      if (v.opcode == PROTOCOL_BINARY_CMD_GET)
+      if (cmd.opcode == PROTOCOL_BINARY_CMD_GET)
          state_output <= ProcVals;
     
       val_cnt_Resp <= 0;
-      vallen_reg_Resp <= extend(v.bodylen - extend(v.keylen));
+      vallen_reg_Resp <= extend(cmd.bodylen - extend(cmd.keylen));
    endrule
   
    rule procVal_resp if (state_output == ProcVals);
@@ -237,15 +248,19 @@ module mkMemCached#(DRAMControllerIfc dram, DMAWriteIfc wrIfc, Reg#(Bit#(32)) wp
    endrule
       
    
-   method Action start(Protocol_Binary_Request_Header cmd);
+   method Action start(Protocol_Binary_Request_Header cmd, Bit#(32) rp, Bit#(32) wp, Bit#(64) nBytes, Bit#(32) id);
  //  method Action start(Bit#(ReqHeaderSz) cmd);
-      reqHeaderQ.enq(cmd);
+      reqHeaderQ.enq(tuple3(cmd, wp, id));
+      rdIfc.readReq(rp, nBytes);
    endmethod
    
-   method ActionValue#(Protocol_Binary_Response_Header) done();
+   method ActionValue#(Tuple2#(Protocol_Binary_Response_Header,Bit#(32))) done();
 //   method ActionValue#(Bit#(RespHeaderSz)) done();
       let v <- toGet(doneQ).get();
       $display("Memcached doneQ dequeued");
+      let cmd = tpl_1(v);
+      if (cmd.opcode == PROTOCOL_BINARY_CMD_GET)
+         wrIfc.done();
       return v;
    endmethod
       
