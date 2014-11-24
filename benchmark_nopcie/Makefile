@@ -11,6 +11,13 @@ BSVFILES = MemEngineTG.bsv \
 	$(SRC_BSV)/ProtocolHeader.bsv \
 	$(SRC_BSV)/hash/JenkinsHash.bsv \
 	$(SRC_BSV)/time/Time.bsv \
+	$(SRC_BSV)/arbiter/MyArbiter.bsv \
+	$(SRC_BSV)/arbiter/DRAMArbiter.bsv \
+	$(SRC_BSV)/arbiter/HtArbiter.bsv \
+	$(SRC_BSV)/hashtable/HeaderReader.bsv \
+	$(SRC_BSV)/hashtable/KeyReader.bsv \
+	$(SRC_BSV)/hashtable/HeaderWriter.bsv \
+	$(SRC_BSV)/hashtable/KeyWriter.bsv \
 	$(SRC_BSV)/hashtable/Hashtable.bsv \
 	$(SRC_BSV)/valuestr/Valuestr.bsv \
 	Top.bsv

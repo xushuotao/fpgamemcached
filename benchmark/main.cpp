@@ -41,13 +41,18 @@ unsigned int *dstBuffers[DMA_BUFFER_COUNT];// = (unsigned int *)portalMmap(dstAl
 unsigned int ref_srcAllocs[DMA_BUFFER_COUNT];
 unsigned int ref_dstAllocs[DMA_BUFFER_COUNT];
 
-pthread_mutex_t mutex;
+/*pthread_mutex_t mutex;
 pthread_cond_t  cond;
 sem_t           done_sem;
-
+*/
 Response_Header header;
 
 std::queue<int> freeList;
+
+PortalPoller *poller = 0;
+
+bool flag = false;
+
 
 class ServerIndication : public ServerIndicationWrapper {  
 public:
@@ -83,20 +88,21 @@ public:
 
   virtual void done(Response_Header resp, uint32_t id) {
     //fprintf(stderr, "\x1b[31mIndication: Done(cnt = %d, id = %d)\x1b[0m\n", cnt, id);
-    pthread_mutex_lock(&mutex);
+ 
     freeList.push(id);
-    pthread_mutex_unlock(&mutex);
+ 
     char* dtaBuf;
     if (!process_response(resp, dtaBuf, id)) {
       exit(0);
     }
     
     if (++cnt == 2*iters) {
-      sem_post(&done_sem);
+      //sem_post(&done_sem);
+      flag = true;
     }
   }
     
-  ServerIndication(unsigned int id) : ServerIndicationWrapper(id), cnt(0) {}  
+  ServerIndication(unsigned int id, PortalPoller *poller) : ServerIndicationWrapper(id, poller), cnt(0) {}  
 };
 
 ServerIndication   *indication;          // = new ServerIndication(IfcNames_ServerIndication);
@@ -152,14 +158,14 @@ void client_set(const void* key,
   
   int ind = -1;
   while (true){
-    pthread_mutex_lock(&mutex);
+ 
     if ( !freeList.empty() ){
       ind = freeList.front();
       freeList.pop();
-      pthread_mutex_unlock(&mutex);
+ 
       break;
     }
-    pthread_mutex_unlock(&mutex);
+ 
   }
   size_t bufLen = generate_keydtaBuf(key, keylen, dta, dtalen, ind);
   device->start(gen_req_header(PROTOCOL_BINARY_CMD_SET, key, keylen, dta, dtalen), ref_srcAllocs[ind], ref_dstAllocs[ind], bufLen, ind);
@@ -173,14 +179,14 @@ void client_get(char* key, size_t keylen){
 
   int ind = -1;
   while (true){
-    pthread_mutex_lock(&mutex);
+ 
     if ( !freeList.empty() ){
       ind = freeList.front();
       freeList.pop();
-      pthread_mutex_unlock(&mutex);
+ 
       break;
     }
-    pthread_mutex_unlock(&mutex);
+ 
   }
   size_t bufLen = generate_keydtaBuf(key, keylen, NULL, 0, ind);
   device->start(gen_req_header(PROTOCOL_BINARY_CMD_GET, key, keylen, NULL, 0), ref_srcAllocs[ind], ref_dstAllocs[ind], bufLen, ind);
@@ -216,16 +222,19 @@ void initSystem(int size1,
 
 int main(){
 
-  mutex = PTHREAD_MUTEX_INITIALIZER;
-  cond  = PTHREAD_COND_INITIALIZER;
+  //  mutex = PTHREAD_MUTEX_INITIALIZER;
+  //cond  = PTHREAD_COND_INITIALIZER;
+
+  /*  
 
   if(sem_init(&done_sem, 1, 0)){
     fprintf(stderr, "failed to init done_sem\n");
     exit(1);
-  }
+    }*/
 
+  poller = new PortalPoller();
 
-  indication = new ServerIndication(IfcNames_ServerIndication);
+  indication = new ServerIndication(IfcNames_ServerIndication, poller);
   device     = new ServerRequestProxy(IfcNames_ServerRequest);
   
   hostDmaDebugRequest     = new DmaDebugRequestProxy(IfcNames_HostDmaDebugRequest);
@@ -246,6 +255,7 @@ int main(){
     srcBuffers[i] = (unsigned int *)portalMmap(srcAllocs[i], alloc_sz);
     dstBuffers[i] = (unsigned int *)portalMmap(dstAllocs[i], alloc_sz);
   }
+  poller->portalExec_init();
 
   portalExec_start();
 
@@ -293,13 +303,23 @@ int main(){
       key[i] = rand()%26+'a';
     client_set(key, keySz, value, valSz);
     client_get(key, keySz);
+    void* rc = poller->portalExec_poll(poller->portalExec_timeout);
+    if ((long) rc >= 0)
+      rc = poller->portalExec_event();
   }
 
-  sem_wait(&done_sem);
+  //  sem_wait(&done_sem);
+  while (!flag) {
+    void* rc = poller->portalExec_poll(poller->portalExec_timeout);
+    if ((long) rc >= 0)
+      rc = poller->portalExec_event();
+  }
   gettimeofday(&t2, NULL);
   elapsedTime = (t2.tv_sec - t1.tv_sec) * 1000.0; // sec to ms
   elapsedTime += (t2.tv_usec - t1.tv_usec) / 1000.0;   // us to ms
   printf("Main:: Done executing %d queries in %lf millisecs\n", iters*2, elapsedTime );
   printf("Main:: %f queries per second\n", iters*2/elapsedTime*1000);
 
+  poller->portalExec_end();
+  portalExec_end();
 }

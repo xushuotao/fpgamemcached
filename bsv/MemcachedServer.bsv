@@ -18,6 +18,7 @@ import Proc::*;
 import Hashtable::*;
 import Valuestr::*;
 
+import IlaWrapper::*;
 
 typedef struct {
    Bit#(8) magic;
@@ -71,9 +72,14 @@ module mkServerRequest#(ServerIndication indication, DRAMControllerIfc dram)(Ser
    MemreadEngine#(64,1)  re <- mkMemreadEngine;
    MemwriteEngine#(64,1) we <- mkMemwriteEngine;
    
+  // `ifndef BSIM
+   let ila <- mkChipscopeDebug();
+   //`else
+   //let ila <- mkChipscopeEmpty();
+   //`endif
    
-   let dmaReader <- mkDMAReader(re.readServers[0], re.dataPipes[0]);
-   let dmaWriter <- mkDMAWriter(we.writeServers[0], we.dataPipes[0]);
+   let dmaReader <- mkDMAReader(re.readServers[0], re.dataPipes[0], ila.ila_dma_0);
+   let dmaWriter <- mkDMAWriter(we.writeServers[0], we.dataPipes[0], ila.ila_dma_1);
    
    Reg#(Bit#(32)) id_reg <- mkRegU();
    Reg#(Bit#(32)) wp_reg <- mkRegU();

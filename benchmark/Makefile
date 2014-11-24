@@ -2,7 +2,8 @@ SRC_BSV = ../bsv
 
 S2H = ServerRequest
 H2S = ServerIndication
-BSVFILES = $(SRC_BSV)/packet/Packet.bsv \
+BSVFILES = ../chipscope/IlaWrapper.bsv \
+	$(SRC_BSV)/packet/Packet.bsv \
 	$(SRC_BSV)/MemcachedServer.bsv \
 	$(SRC_BSV)/Proc.bsv \
 	$(SRC_BSV)/DMAHelper.bsv \
@@ -17,9 +18,11 @@ NUMBER_OF_MASTERS = 1
 
 XBSV_DIR=~/tools/xbsv/
 
-CONNECTALFLAGS =	--verilog /afs/csail.mit.edu/group/csg/tools_lx86/bluespec/current/lib/board_support/bluenoc/xilinx/VC707/verilog/ddr3_v2_0/ddr3_v2_0/user_design/rtl \
+CONNECTALFLAGS = --verilog /afs/csail.mit.edu/group/csg/tools_lx86/bluespec/current/lib/board_support/bluenoc/xilinx/VC707/verilog/ddr3_v2_0/ddr3_v2_0/user_design/rtl \
+		--verilog /home/shuotao/fpgamemcached/chipscope/ila_dma_viv.v \
 		--constraint $(XBSV_DIR)/xilinx/constraints/vc707_ddr3_sx.xdc \
 		--clib rt \
+		--xci ~/fpgamemcached/chipscope/ila_dma/ila_dma.xci \
 		-D IMPORT_HOSTIF
 
 ifeq ($(BOARD), bluesim)

@@ -13,10 +13,11 @@ import ClientServer::*;
 import Connectable::*;
 import Counter::*;
 
+//import DRAMControllerTypes::*;
 typedef Bit#(64) DDR3Address;
 typedef Bit#(512) DDR3Data;
 
-// DDR2 Request
+// DDR3 Request
 // Used for both reads and writes.
 //
 // To perform a read:
@@ -61,6 +62,7 @@ typedef Bit#(512) DDR3Response;
 
 typedef Client#(DDR3Request, DDR3Response) DDR3Client;
 
+
 interface DebugProbe;
    method DDR3Request req;
    method DDR3Response resp;
@@ -80,7 +82,7 @@ interface DRAMControllerIfc;
    interface DebugProbe debug;
 endinterface
 
-(*synthesize*)
+//(*synthesize*)
 module mkDRAMController(DRAMControllerIfc);
    Clock clk <- exposeCurrentClock;
    Reset rst_n <- exposeCurrentReset;

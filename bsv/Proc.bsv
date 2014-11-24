@@ -1,18 +1,20 @@
+import FIFO::*;
+import BRAMFIFO::*;
+import Vector::*;
+import GetPut::*;
+import ClientServer::*;
+import Connectable::*;
+
+
 import ProtocolHeader::*;
 
 import JenkinsHash::*;
 import Hashtable::*;
 import Valuestr::*;
 import Time::*;
+import DRAMArbiter::*;
 import DRAMController::*;
 //import MemcachedServer::*;
-import FIFO::*;
-import BRAMFIFO::*;
-import Vector::*;
-
-import GetPut::*;
-import ClientServer::*;
-import Connectable::*;
 
 //interface ProcIfc;
 //   interface Put request;
@@ -113,15 +115,27 @@ module mkMemCached#(DRAMControllerIfc dram, DMAReadIfc rdIfc, DMAWriteIfc wrIfc)
    
    /***********Processing Reqs************/
    
+   DRAMArbiterIfc#(3) arbiter <- mkDRAMArbiter(False);
+   
    let clk <- mkLogicClock;
    
-   let valstr_acc <- mkValRawAccess(clk, dram);
+   //let valstr_acc <- mkValRawAccess(clk, dram);
+   let valstr_acc <- mkValRawAccess(clk);
    
-   let valstr_mng <- mkValManager(dram);
+   //let valstr_mng <- mkValManager(dram);
+   let valstr_mng <- mkValManager;
    
-   let htable <- mkAssocHashtb(dram, clk, valstr_mng.valAlloc);
+   //let htable <- mkAssocHashtb(dram, clk, valstr_mng.valAlloc);
+   let htable <- mkAssocHashtb(clk, valstr_mng.valAlloc);
    
    let hash <- mkJenkinsHash;
+   
+   
+   mkConnection(htable.dramClient, arbiter.dramServers[0]);
+   mkConnection(valstr_acc.dramClient, arbiter.dramServers[1]);
+   mkConnection(valstr_mng.dramClient, arbiter.dramServers[2]);
+   
+   mkConnection(arbiter.dramClient, dram);
   
    FIFO#(Bit#(64)) keyBuf <- mkSizedBRAMFIFO(32);
    

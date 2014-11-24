@@ -4,10 +4,11 @@ import FIFO::*;
 import FIFOF::*;
 import SpecialFIFOs::*;
 import Vector::*;
+import GetPut::*;
+import ClientServer::*;
 
-import DRAMController::*;
-
-import DDR3::*;
+import DRAMArbiterTypes::*;
+import DRAMArbiter::*;
 
 import Time::*;
 
@@ -17,9 +18,9 @@ typedef struct{
 
 /* constants definitions */
 
-typedef SizeOf#(ValHeader) HeaderSz;
+typedef SizeOf#(ValHeader) ValHeaderSz;
 
-typedef TDiv#(HeaderSz, 512) HeaderBurstSz;
+typedef TDiv#(ValHeaderSz, 512) HeaderBurstSz;
 
 
 typedef enum {Idle, ProcHeader, Proc} ValAcc_State deriving (Bits, Eq);
@@ -27,16 +28,16 @@ typedef enum {Idle, ProcHeader, Proc} ValAcc_State deriving (Bits, Eq);
 typedef struct {
    Bit#(64) addr;
    Bit#(64) nBytes;
-   } DRAMReq deriving (Bits, Eq);
+   } BurstReq deriving (Bits, Eq);
 
 
 
 /* interface defintions */
 
 interface DebugProbes_Val;
-   method DRAMReq debugRdReq;
+   method BurstReq debugRdReq;
    method Bit#(64) debugRdDta;
-   method DRAMReq debugWrReq;
+   method BurstReq debugWrReq;
    method Bit#(64) debugWrDta;
 endinterface
 
@@ -47,12 +48,15 @@ interface ValAccess_ifc;
    
    method Action writeReq(Bit#(64) startAddr, Bit#(64) nBytes);
    method Action writeVal(Bit#(64) wrVal);
+   
+   interface DRAMClient dramClient;
 
    interface DebugProbes_Val debug;
+   
 endinterface
 
 //(*synthesize*)
-module mkValRawAccess#(Clk_ifc real_time, DRAMControllerIfc dram)(ValAccess_ifc);
+module mkValRawAccess#(Clk_ifc real_time)(ValAccess_ifc);
    
    Reg#(ValAcc_State) state <- mkReg(Idle);
    Reg#(Bool) rnw <- mkRegU();
@@ -77,17 +81,22 @@ module mkValRawAccess#(Clk_ifc real_time, DRAMControllerIfc dram)(ValAccess_ifc)
    
    FIFO#(Bit#(64)) readRespQ <- mkFIFO();
    
+   FIFO#(DRAMReq) dramCmdQ <- mkFIFO();
+   FIFO#(Bit#(512)) dramDataQ <- mkFIFO();
+   
    rule updateHeader if (state == ProcHeader);
       //$display("updateHeader: currAddr = %d, data = %h, nBytes = %d",currAddr, real_time.get_time, fromInteger(valueOf(TDiv#(SizeOf#(Time_t),8))));
-      dram.write(currAddr, extend(pack(real_time.get_time)),fromInteger(valueOf(TDiv#(SizeOf#(Time_t),8))));
-      //$display("updateHeader: nextAddr <= %d", currAddr + fromInteger(valueOf(TDiv#(HeaderSz,8))));
-      currAddr <= currAddr + fromInteger(valueOf(TDiv#(HeaderSz,8)));
+      //dram.write(currAddr, extend(pack(real_time.get_time)),fromInteger(valueOf(TDiv#(SizeOf#(Time_t),8))));
+      dramCmdQ.enq(DRAMReq{rnw:False, addr: currAddr, data:extend(pack(real_time.get_time)), numBytes:fromInteger(valueOf(TDiv#(SizeOf#(Time_t),8)))});
+      //$display("updateHeader: nextAddr <= %d", currAddr + fromInteger(valueOf(TDiv#(ValHeaderSz,8))));
+      currAddr <= currAddr + fromInteger(valueOf(TDiv#(ValHeaderSz,8)));
       state <= Proc;
    endrule
    
    rule driveReadCmd if (state == Proc && byteCnt < numBytes && rnw);
       $display("Valstr issuing read cmd: currAddr = %d", currAddr);
-      dram.readReq(currAddr, 64);
+      //dram.readReq(currAddr, 64);
+      dramCmdQ.enq(DRAMReq{rnw:True, addr: currAddr, data:?, numBytes:64});
       if (currAddr[5:0] == 0) begin
          currAddr <= currAddr + 64;
          byteCnt <= byteCnt + 64;
@@ -102,7 +111,8 @@ module mkValRawAccess#(Clk_ifc real_time, DRAMControllerIfc dram)(ValAccess_ifc)
    rule procReadResp if (state == Proc && rnw);
       if (byteCnt2 < numBytes) begin
          if (firstLine) begin
-            let v <- dram.read();
+            //let v <- dram.read();
+            let v <- toGet(dramDataQ).get();
             lineBuf <= v;
             firstLine <= False;
          end
@@ -115,7 +125,8 @@ module mkValRawAccess#(Clk_ifc real_time, DRAMControllerIfc dram)(ValAccess_ifc)
                byteCnt2 <= byteCnt2 + 8; //+ extend(wordCnt);
                
                if ( lineCnt == extend(wordCnt) && (byteCnt2 + 8 < numBytes) ) begin
-                  let v <- dram.read();
+                  //let v <- dram.read();
+                  let v <- toGet(dramDataQ).get();
                   lineBuf <= v;
                   lineCnt <= 64;
                end
@@ -131,7 +142,8 @@ module mkValRawAccess#(Clk_ifc real_time, DRAMControllerIfc dram)(ValAccess_ifc)
                wordCnt <= wordCnt - truncate(lineCnt);
                lineCnt <= 64;
                if ( byteCnt2 + extend(lineCnt) < numBytes) begin
-                  let v <- dram.read();
+                  //let v <- dram.read();
+                  let v <- toGet(dramDataQ).get();
                   lineBuf <= v;
                end
             end
@@ -169,7 +181,8 @@ module mkValRawAccess#(Clk_ifc real_time, DRAMControllerIfc dram)(ValAccess_ifc)
             else begin
                $display("ValStr write(Last): currAddr = %d, data = %h, nBytes = %d",currAddr, {wordBuf,lineBuf} >> {lineCnt,3'b0}, numBytes);
                Bit#(6) offset = truncate(currAddr);
-               dram.write(currAddr, truncate({wordBuf,lineBuf} >> {lineCnt, 3'b0}) >> {offset,3'b0}, truncate(numBytes));
+               //dram.write(currAddr, truncate({wordBuf,lineBuf} >> {lineCnt, 3'b0}) >> {offset,3'b0}, truncate(numBytes));
+               dramCmdQ.enq(DRAMReq{rnw:False, addr: currAddr, data:truncate({wordBuf,lineBuf} >> {lineCnt, 3'b0}) >> {offset,3'b0}, numBytes:truncate(numBytes)});
                state <= Idle;
             end
             
@@ -204,7 +217,8 @@ module mkValRawAccess#(Clk_ifc real_time, DRAMControllerIfc dram)(ValAccess_ifc)
             //$display("Valstr write: initNbytes = %d", initNbytes);
             numBytes <= numBytes - extend(nBytes);
             $display("ValStr write(Normal): currAddr = %d, data = %h, nBytes = %d",currAddr, ({wordBuf,lineBuf} >> (lineCnt << 3)) >> {offset,3'b0}, nBytes);
-            dram.write(currAddr, truncate({wordBuf,lineBuf} >> (lineCnt << 3)) >> {offset,3'b0}, nBytes);
+            //dram.write(currAddr, truncate({wordBuf,lineBuf} >> (lineCnt << 3)) >> {offset,3'b0}, nBytes);
+            dramCmdQ.enq(DRAMReq{rnw:False, addr: currAddr, data:truncate({wordBuf,lineBuf} >> (lineCnt << 3)) >> {offset,3'b0}, numBytes:nBytes});
             wordBuf <= wordBuf >> (lineCnt << 3);
             lineCnt <= 64;
             wordCnt <= wordCnt - truncate(lineCnt);
@@ -213,14 +227,15 @@ module mkValRawAccess#(Clk_ifc real_time, DRAMControllerIfc dram)(ValAccess_ifc)
    endrule
             
       
-   Wire#(DRAMReq) rdReq <- mkWire;
-   Wire#(DRAMReq) wrReq <- mkWire;
+   Wire#(BurstReq) rdReq <- mkWire;
+   Wire#(BurstReq) wrReq <- mkWire;
    Wire#(Bit#(64)) rdDta <- mkWire;
    Wire#(Bit#(64)) wrDta <- mkWire;
       
    
    method Action readReq(Bit#(64) startAddr, Bit#(64) nBytes) if (state == Idle);
-      Bit#(6) offset_local = truncate(startAddr + fromInteger(valueOf(TDiv#(HeaderSz,8))));
+      $display("Valuestr Get read req, startAddr = %d, nBytes = %d", startAddr, nBytes);
+      Bit#(6) offset_local = truncate(startAddr + fromInteger(valueOf(TDiv#(ValHeaderSz,8))));
       initNbytes <= 64 - extend(offset_local);
       state <= ProcHeader;
       
@@ -242,7 +257,7 @@ module mkValRawAccess#(Clk_ifc real_time, DRAMControllerIfc dram)(ValAccess_ifc)
       
       rnw <= True;
    
-      rdReq <= DRAMReq{addr: startAddr, nBytes: nBytes};
+      rdReq <= BurstReq{addr: startAddr, nBytes: nBytes};
    endmethod
    
    method ActionValue#(Bit#(64)) readVal();
@@ -253,7 +268,8 @@ module mkValRawAccess#(Clk_ifc real_time, DRAMControllerIfc dram)(ValAccess_ifc)
    endmethod
    
    method Action writeReq(Bit#(64) startAddr, Bit#(64) nBytes) if (state == Idle);
-      Bit#(6) offset_local = truncate(startAddr + fromInteger(valueOf(TDiv#(HeaderSz,8))));
+      $display("Valuestr Get write req, startAddr = %d, nBytes = %d", startAddr, nBytes);
+      Bit#(6) offset_local = truncate(startAddr + fromInteger(valueOf(TDiv#(ValHeaderSz,8))));
       initNbytes <= 64 - extend(offset_local);//~offset_local + 1;
       state <= ProcHeader;
       
@@ -274,22 +290,28 @@ module mkValRawAccess#(Clk_ifc real_time, DRAMControllerIfc dram)(ValAccess_ifc)
    
       rnw <= False;
    
-      wrReq <= DRAMReq{addr: startAddr, nBytes: nBytes};
+      wrReq <= BurstReq{addr: startAddr, nBytes: nBytes};
    endmethod
    
    method Action writeVal(Bit#(64) wrVal); 
       wDataWord.enq(wrVal);
       wrDta <= wrVal;
    endmethod
+   
+   interface DRAMClient dramClient;
+      interface Get request = toGet(dramCmdQ);
+      interface Put response = toPut(dramDataQ);
+   endinterface
+
          
    interface DebugProbes_Val debug;
-      method DRAMReq debugRdReq;
+      method BurstReq debugRdReq;
          return rdReq;
       endmethod
       method Bit#(64) debugRdDta;
          return rdDta;
       endmethod
-      method DRAMReq debugWrReq;
+      method BurstReq debugWrReq;
          return wrReq;
       endmethod
       method Bit#(64) debugWrDta;
@@ -316,6 +338,9 @@ interface ValManage_ifc;
 //   interface ValAccess_ifc valAccess;
    interface ValAlloc_ifc valAlloc;
    interface ValInit_ifc valInit;
+
+   interface DRAMClient dramClient;   
+   
 endinterface
 
 
@@ -346,7 +371,7 @@ endfunction
 
 
 //(*synthesize*)
-module mkValManager#(DRAMControllerIfc dram)(ValManage_ifc);
+module mkValManager(ValManage_ifc);
    
    /* initialization registers */
    FIFOF#(Bit#(64)) oldAddr_1 <- mkSizedBypassFIFOF(3);
@@ -392,6 +417,10 @@ module mkValManager#(DRAMControllerIfc dram)(ValManage_ifc);
    
    FIFO#(Bit#(2)) whichBinFifo <- mkBypassFIFO();
    FIFOF#(Tuple2#(Maybe#(Bit#(64)),Bit#(2))) toRdHeader <- mkFIFOF();
+   
+   FIFO#(DRAMReq) dramCmdQ <- mkFIFO();
+   FIFO#(Bit#(512)) dramDataQ <- mkFIFO();
+
    
    rule push_OldAddr;
       let v = inputFifo.first();
@@ -505,7 +534,9 @@ module mkValManager#(DRAMControllerIfc dram)(ValManage_ifc);
       end
       
       addrBuf[numOfReqs] <= addr;
-      dram.readReq(addr,64);
+      //dram.readReq(addr,64);
+      dramCmdQ.enq(DRAMReq{rnw:True, addr: addr, data:?, numBytes:64});
+      
       numOfReqs <= numOfReqs + 1;
       
    endrule
@@ -513,8 +544,9 @@ module mkValManager#(DRAMControllerIfc dram)(ValManage_ifc);
    rule collectRd if ( state == ReadHeader );
       let old_hdBuf = hdBuf;
       if ( numOfResp < 4 ) begin
-         let d <- dram.read;
-         old_hdBuf[numOfResp] = unpack(d[511: valueOf(TSub#(512,HeaderSz))]);
+         //let d <- dram.read;
+         let d <- toGet(dramDataQ).get();
+         old_hdBuf[numOfResp] = unpack(d[511: valueOf(TSub#(512,ValHeaderSz))]);
          numOfResp <= numOfResp + 1;
       end
       else begin
@@ -530,7 +562,11 @@ module mkValManager#(DRAMControllerIfc dram)(ValManage_ifc);
       state <= Idle;
    endrule
       
-      
+
+   interface DRAMClient dramClient;
+      interface Get request = toGet(dramCmdQ);
+      interface Put response = toPut(dramDataQ);
+   endinterface      
    
    interface ValAlloc_ifc valAlloc;
       method Action newAddrReq(Bit#(64) nBytes, Bit#(64) oldAddr, Bool trade_in) if (initValDone && initAddrDone);

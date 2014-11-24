@@ -44,7 +44,7 @@ module mkDepacketEngine(DepacketIfc#(packetSz, bufSz, offset))
          busy <= False;
       end
       else begin
-         $display("DepacketEngine, packetPtr = %d, bufPtr = %d, bufCnt = %d, packetCnt = %d", packetPtr, bufPtr, bufCnt, packetCnt);
+         //$display("DepacketEngine, packetPtr = %d, bufPtr = %d, bufCnt = %d, packetCnt = %d", packetPtr, bufPtr, bufCnt, packetCnt);
          if ( extend(packetPtr) <= bufPtr ) begin
             if (packetCnt > 0) begin
                let packet = packetFifo.first;
@@ -79,7 +79,7 @@ module mkDepacketEngine(DepacketIfc#(packetSz, bufSz, offset))
    endrule
    
    method Action start(Bit#(32) nBufs, Bit#(32) nPackets) if (!busy);
-      $display("DepacketEng start, nBufs = %d, nPackets = %d", nBufs, nPackets);
+      //$display("DepacketEng start, nBufs = %d, nPackets = %d", nBufs, nPackets);
       packetPtr <= fromInteger(valueOf(packetSz)); 
       bufPtr <= fromInteger(initialSz);
       packetCnt <= nPackets;
@@ -122,7 +122,7 @@ module mkPacketEngine(PacketIfc#(packetSz, bufSz, offset))
       /* First buf data received*/
       else 
          if (firstLine) begin
-            $display("PacketEngine, firstLine, packetPtr = %d, bufPtr = %d, bufCnt = %d, packetCnt = %d", packetPtr, bufPtr, bufCnt, packetCnt);
+            //$display("PacketEngine, firstLine, packetPtr = %d, bufPtr = %d, bufCnt = %d, packetCnt = %d", packetPtr, bufPtr, bufCnt, packetCnt);
             firstLine <= False;
             let v = bufFifo.first;
             bufFifo.deq();
@@ -130,7 +130,7 @@ module mkPacketEngine(PacketIfc#(packetSz, bufSz, offset))
             bufCnt <= bufCnt - 1;
          end
          else begin
-            $display("PacketEngine, packetPtr = %d, bufPtr = %d, bufCnt = %d, packetCnt = %d", packetPtr, bufPtr, bufCnt, packetCnt);
+            //$display("PacketEngine, packetPtr = %d, bufPtr = %d, bufCnt = %d, packetCnt = %d", packetPtr, bufPtr, bufCnt, packetCnt);
             if (extend(packetPtr) > bufPtr) begin
                if ( bufCnt == 0 ) begin
                   tempBuf <= 0;
@@ -163,7 +163,7 @@ module mkPacketEngine(PacketIfc#(packetSz, bufSz, offset))
    endrule
    
    method Action start(Bit#(32) nBufs, Bit#(32) nPackets) if (!busy);
-      $display("PacketEng start, nBufs = %d, nPackets = %d", nBufs, nPackets);
+      //$display("PacketEng start, nBufs = %d, nPackets = %d", nBufs, nPackets);
       packetPtr <= fromInteger(valueOf(packetSz));
       bufPtr <= fromInteger(initialSz);
       packetCnt <= nPackets;

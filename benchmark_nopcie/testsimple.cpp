@@ -4,6 +4,7 @@
 #include <unistd.h>
 #include <assert.h>
 #include <math.h>
+#include <iostream>
 
 #include "SimpleIndicationWrapper.h"
 #include "SimpleRequestProxy.h"
@@ -15,6 +16,7 @@ class SimpleIndication : public SimpleIndicationWrapper
 public:
   virtual void finish(uint64_t v) {
     fprintf(stderr, "FPGA finishes in %d cycles.\n", v);
+    sleep(1);
     exit(0);
   }
   SimpleIndication(unsigned int id) : SimpleIndicationWrapper(id){}
@@ -53,7 +55,10 @@ int main(int argc, const char **argv)
   device->initValDelimit(lgSz1, lgSz2, lgSz3);
   device->initAddrDelimit(lgAddr1, lgAddr2, lgAddr3);
   
-  device->start(1000);
+  int numTests;
+  std::cout << "Input Number of Tests: ";
+  std::cin >> numTests;
+  device->start(numTests);
 
   fprintf(stderr, "Main::about to go to sleep\n");
   while(true){sleep(2);}

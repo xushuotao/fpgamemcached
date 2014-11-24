@@ -34,7 +34,14 @@ import XilinxCells ::*;
 
 typedef enum {SimpleIndication, SimpleRequest} IfcNames deriving (Eq,Bits);
 
-module mkPortalTop#(HostType host)(StdPortalTop#(PhysAddrWidth));
+`ifdef BSIM
+typedef StdPortalTop#(PhysAddrWidth) PortalTopIfc;
+`else
+typedef PortalTop#(PhysAddrWidth, 64, DDR3_Pins_VC707, 0) PortalTopIfc;
+`endif
+
+
+module mkPortalTop#(HostType host)(PortalTopIfc);
    
    `ifdef BSIM
    let ddr3_ctrl_user <- mkDDR3Simulator;
@@ -98,6 +105,11 @@ module mkPortalTop#(HostType host)(StdPortalTop#(PhysAddrWidth));
    interface slave = ctrl_mux;
    interface masters = nil;
    interface leds = default_leds;
+   
+   `ifndef BSIM
+   interface pins = ddr3_ctrl.ddr3;
+   `endif
+
 
 endmodule : mkPortalTop
 

@@ -73,22 +73,32 @@ module mkSimpleRequest#(SimpleIndication indication, DRAMControllerIfc dram)(Sim
   
    mkConnection(memcached.server.response, dmaWriter.request);
    
-   rule process_done;
-      //dmaWriter.done();
-      let v <- memcached.done();
-      //Protocol_Binary_Response_Header v = unpack(d);
-      let header = tpl_1(v);
-      //let id = tpl_2(v);
-      $display("Memcached sends back indication: opcode = %d", header.opcode);
-     
-      //indication.done(unpack(pack(header)), id);
-   endrule
+   
    
    Reg#(Bit#(32)) testCnt <- mkReg(-1);
    Reg#(Bit#(32)) testMax <- mkReg(0);
    
    Reg#(Bool) started <- mkReg(False);
    Reg#(Bit#(64)) cycleCnt <- mkRegU();
+   Reg#(Bit#(32)) testCnt2 <- mkReg(0);
+   rule process_done if (started);
+      if ( testCnt2 >= testMax ) begin
+         $display("Finish: cycleCnt = %d", cycleCnt);
+         indication.finish(cycleCnt);
+         started <= False;
+      end
+      else begin
+         //dmaWriter.done();
+         let v <- memcached.done();
+         //Protocol_Binary_Response_Header v = unpack(d);
+         let header = tpl_1(v);
+      //let id = tpl_2(v);
+         $display("Memcached sends back indication: opcode = %d", header.opcode);
+     
+      //indication.done(unpack(pack(header)), id);
+         testCnt2 <= testCnt2 + 1;
+      end
+   endrule
    
    (* descending_urgency = "command_issue, incr_cnt" *)
    
@@ -97,12 +107,7 @@ module mkSimpleRequest#(SimpleIndication indication, DRAMControllerIfc dram)(Sim
    endrule
    
    rule command_issue if (started);
-      if ( testCnt >= testMax ) begin
-         $display("Finish: cycleCnt = %d", cycleCnt);
-         indication.finish(cycleCnt);
-         started <= False;
-      end
-      else begin
+      if (testCnt < testMax) begin
          $display("Issuing command %d", testCnt);
          if ( testCnt[0] == 0 ) begin
             memcached.start(Protocol_Binary_Request_Header{magic:PROTOCOL_BINARY_REQ,
@@ -138,6 +143,7 @@ module mkSimpleRequest#(SimpleIndication indication, DRAMControllerIfc dram)(Sim
       started <= True;
       testCnt <= 0;
       cycleCnt <= 0;
+      testCnt2 <= 0;
    endmethod
    
    method Action initValDelimit(Bit#(64) lgSz1, Bit#(64) lgSz2, Bit#(64) lgSz3);
