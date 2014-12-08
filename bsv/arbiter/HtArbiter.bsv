@@ -10,17 +10,20 @@ import Connectable::*;
 import HtArbiterTypes::*;
 import DRAMArbiterTypes::*;
 import DRAMArbiter::*;
+import Scoreboard::*;
+import MyArbiter::*;
 
 
 interface DRAMReadIfc;
-   method Action start(Bit#(32) hv, Bit#(32) numReqs);
-   interface Put#(DRAMReadReq) request;
+   method Action start(Bit#(32) hv, Bit#(8) idx, Bit#(32) numReqs);
+   method ActionValue#(Bit#(8)) getReqId();
+   interface Put#(HtDRAMReq) request;
    interface Get#(Bit#(512)) response;
 endinterface
 
 interface DRAMWriteIfc;
-   method Action start(Bit#(32) hv, Bit#(32) numReqs);
-   interface Put#(DRAMWriteReq) request;
+   method Action start(Bit#(32) hv, Bit#(8) idx, Bit#(32) numReqs);
+   interface Put#(HtDRAMReq) request;
 endinterface
 
 
@@ -33,243 +36,295 @@ interface HtArbiterIfc;
 endinterface
 
 module mkHtArbiter(HtArbiterIfc);
-   DRAMArbiterIfc#(4) arbiter <- mkDRAMArbiter(False);
+   Arbiter_IFC#(4) arbiter <- mkArbiter(False);
    
    
    /* request fifos */
-   FIFO#(Tuple2#(Bit#(32), Bit#(32))) hdrRd_reqs <- mkFIFO;
-   FIFO#(Tuple2#(Bit#(32), Bit#(32))) keyRd_reqs <- mkFIFO;
-   FIFO#(Tuple2#(Bit#(32), Bit#(32))) hdrWr_reqs <- mkFIFO;
-   FIFO#(Tuple2#(Bit#(32), Bit#(32))) keyWr_reqs <- mkFIFO;
+   Vector#(4, FIFO#(Tuple3#(Bit#(32), Bit#(8), Bit#(32)))) reqFifos <- replicateM(mkFIFO);
+   let hdrRd_reqs = reqFifos[0];
+   let keyRd_reqs = reqFifos[2];
+   let hdrWr_reqs = reqFifos[1];
+   let keyWr_reqs = reqFifos[3];
    
    /* dram req fifos */
-   FIFO#(DRAMReadReq) hdrRd_ddrReqs <- mkFIFO;
-   FIFO#(DRAMWriteReq) hdrWr_ddrReqs <- mkFIFO;
-   FIFO#(DRAMReadReq) keyRd_ddrReqs <- mkFIFO;
-   FIFO#(DRAMWriteReq) keyWr_ddrReqs <- mkFIFO;
+   Vector#(4, FIFOF#(HtDRAMReq)) ddrReqFifos <- replicateM(mkFIFOF);
+   let hdrRd_ddrReqs = ddrReqFifos[0];
+   let keyRd_ddrReqs = ddrReqFifos[1];
+   let hdrWr_ddrReqs = ddrReqFifos[2];
+   let keyWr_ddrReqs = ddrReqFifos[3];
    
    /* dram resp fifos */
-   FIFO#(Bit#(512)) hdrRd_ddrResps <- mkFIFO;
-   FIFO#(Bit#(512)) keyRd_ddrResps <- mkFIFO;
+   Vector#(2, FIFO#(Bit#(512))) ddrRespFifos <- replicateM(mkFIFO);
+   let hdrRd_ddrResps = ddrRespFifos[0];
+   let keyRd_ddrResps = ddrRespFifos[1];
+
    
-   mkConnection(arbiter.dramServers[0].response, toPut(hdrRd_ddrResps));
-   mkConnection(arbiter.dramServers[2].response, toPut(keyRd_ddrResps));
+   FIFO#(DRAMReq) dramCmdQ <- mkFIFO;
+   FIFO#(Bit#(1)) tagQ <- mkSizedFIFO(32);
+   FIFO#(Bit#(512)) dramDataQ <- mkSizedFIFO(32);
    
-   /* inflight commands */
-   FIFOF#(Bit#(32)) hdrRd_inflight <- mkSizedFIFOF(1);
-   FIFOF#(Bit#(32)) keyRd_inflight <- mkSizedFIFOF(1);
-   FIFOF#(Bit#(32)) hdrWr_inflight <- mkSizedFIFOF(1);
-   FIFOF#(Bit#(32)) keyWr_inflight <- mkSizedFIFOF(1);
+   FIFO#(Bit#(8)) reqIdQ <- mkSizedFIFO(32);
+
    
-   /* outstanding commands */
-   /*Reg#(Bit#(5)) nextReqId <- mkReg(0);
-   FIFOF#(Bit#(5)) hdrRd_reqIds <- mkSizedFIFOF(32);
-   FIFOF#(Bit#(5)) keyRd_reqIds <- mkSizedFIFOF(32);
-   Reg#(Bit#(5)) currRespId <- mkReg(0);*/
    
-   /* dram things */
-   FIFO#(DRAMReq) dramCmdQ <- mkFIFO();
-   FIFO#(Bit#(512)) dramDataQ <- mkFIFO();
+   ScoreboardIfc#(8) sb <- mkScoreboard;
+   
+   //* arbitration things *
+   
+   Vector#(4, PulseWire) grant_vector <- replicateM(mkPulseWire);
    
    //////////read header rules///////////
-   Reg#(Bool) busy_hdrRd <- mkReg(False);
+   //Reg#(Bool) busy_hdrRd <- mkReg(False);
    
-   Reg#(Bit#(32)) reqCnt_hdrRd <- mkReg(-1);
-   Reg#(Bit#(32)) reqMax_hdrRd <- mkReg(0);
+   Reg#(Bit#(32)) reqCnt_hdrRd <- mkReg(0);
+   FIFOF#(Bit#(32)) reqMax_hdrRdQ <- mkFIFOF();
    
    
-   rule doStart_hdrRd if (!busy_hdrRd);
+   
+   rule doStart_hdrRd;
       let v = hdrRd_reqs.first();
       let hv = tpl_1(v);
-      let numReqs = tpl_2(v);
-      if (hdrWr_inflight.notEmpty()) begin
-         let inflight = hdrWr_inflight.first();
-         if ( inflight != hv ) begin
-            reqCnt_hdrRd <= 0;
-            reqMax_hdrRd <= numReqs;
-            hdrRd_reqs.deq;
-            hdrRd_inflight.enq(hv);
-            busy_hdrRd <= True;
-         end
-      end
-      else begin
-         reqCnt_hdrRd <= 0;
-         reqMax_hdrRd <= numReqs;
+      let numReqs = tpl_3(v);
+      
+      sb.hdrRequest(hv);
+      
+   endrule
+  
+   rule doStart_hdrRd_1;
+      let v = hdrRd_reqs.first();
+      let hv = tpl_1(v);
+      let numReqs = tpl_3(v);
+  
+      let val = sb.hdrGrant();
+      $display("hdrRequest get grant", val);
+      if ( isValid(val) ) begin
+         let idx = fromMaybe(?, val);
+         reqIdQ.enq(extend(idx));
+         sb.insert(hv, idx);
+         reqMax_hdrRdQ.enq(numReqs);
          hdrRd_reqs.deq;
-         hdrRd_inflight.enq(hv);
-         busy_hdrRd <= True;
       end
    endrule
+      
+      
+   rule issueCmd_hdrRd if (hdrRd_ddrReqs.notEmpty && reqMax_hdrRdQ.notEmpty);
+      arbiter.clients[0].request();
+   endrule
    
-   rule issueCmd_hdrRd if (busy_hdrRd);
-      if ( reqCnt_hdrRd >= reqMax_hdrRd ) begin
-         busy_hdrRd <= False;
-         hdrRd_inflight.deq();
+   rule issueCmd_hdrRd_1 if (grant_vector[0]);
+      let reqMax_hdrRd = reqMax_hdrRdQ.first();
+      if ( reqCnt_hdrRd + 1 >= reqMax_hdrRd ) begin
+         reqMax_hdrRdQ.deq();
+         reqCnt_hdrRd <= 0;
       end
       else begin
-         let req <- toGet(hdrRd_ddrReqs).get();
-         arbiter.dramServers[0].request.put(DRAMReq{rnw:True, addr: req.addr, data:?, numBytes: req.numBytes});
          reqCnt_hdrRd <= reqCnt_hdrRd + 1;
       end
    endrule
    
-   //////////write header rules///////////
-   
-   Reg#(Bool) busy_hdrWr <- mkReg(False);
-   
-   Reg#(Bit#(32)) reqCnt_hdrWr <- mkReg(-1);
-   Reg#(Bit#(32)) reqMax_hdrWr <- mkReg(0);
-   
-   rule doStart_hdrWr if (!busy_hdrWr);
-      let v = hdrWr_reqs.first();
-      let hv = tpl_1(v);
-      let numReqs = tpl_2(v);
-      if (hdrRd_inflight.notEmpty()) begin
-         let inflight = hdrRd_inflight.first();
-         if ( inflight != hv ) begin
-            reqCnt_hdrWr <= 0;
-            reqMax_hdrWr <= numReqs;
-            hdrWr_reqs.deq;
-            hdrWr_inflight.enq(hv);
-            busy_hdrWr <= True;
-         end
-      end
-      else begin
-         reqCnt_hdrWr <= 0;
-         reqMax_hdrWr <= numReqs;
-         hdrWr_reqs.deq;
-         hdrWr_inflight.enq(hv);
-         busy_hdrWr <= True;
-      end
-   endrule
-   
-   rule issueCmd_hdrWr if (busy_hdrWr);
-      if ( reqCnt_hdrWr >= reqMax_hdrWr ) begin
-         busy_hdrWr <= False;
-         hdrWr_inflight.deq();
-      end
-      else begin
-         let req <- toGet(hdrWr_ddrReqs).get();
-         arbiter.dramServers[1].request.put(DRAMReq{rnw:False, addr: req.addr, data:req.data, numBytes: req.numBytes});
-         reqCnt_hdrWr <= reqCnt_hdrWr + 1;
-      end
-   endrule
-   
    //////////read key rules///////////
-   Reg#(Bool) busy_keyRd <- mkReg(False);
    
-   Reg#(Bit#(32)) reqCnt_keyRd <- mkReg(-1);
-   Reg#(Bit#(32)) reqMax_keyRd <- mkReg(0);
+   Reg#(Bit#(32)) reqCnt_keyRd <- mkReg(0);
+   Reg#(Bit#(32)) reqCnt_keyWr <- mkReg(0);
    
-   rule doStart_keyRd if (!busy_keyRd);
+   FIFO#(Tuple2#(Bit#(32),Bit#(8))) currCmd_keyRd <- mkFIFO();
+   FIFO#(Bit#(32)) reqMax_keyRdQ <- mkFIFO();
+   
+   rule doStart_keyRd;
       let v = keyRd_reqs.first();
       let hv = tpl_1(v);
-      let numReqs = tpl_2(v);
-      if (keyWr_inflight.notEmpty()) begin
-         let inflight = keyWr_inflight.first();
-         if ( inflight != hv ) begin
-            reqCnt_keyRd <= 0;
-            reqMax_keyRd <= numReqs;
-            keyRd_reqs.deq;
-            keyRd_inflight.enq(hv);
-            busy_keyRd <= True;
-         end
+      let idx = tpl_2(v);
+      let numReqs = tpl_3(v);
+      if (numReqs > 0) begin
+         currCmd_keyRd.enq(tuple2(hv,idx));
+         reqMax_keyRdQ.enq(numReqs);
       end
-      else begin
-         reqCnt_keyRd <= 0;
-         reqMax_keyRd <= numReqs;
-         keyRd_reqs.deq;
-         keyRd_inflight.enq(hv);
-         busy_keyRd <= True;
+      keyRd_reqs.deq();
+   endrule
+   
+   rule issueCmd_keyRd if (keyRd_ddrReqs.notEmpty);
+      let v = currCmd_keyRd.first();
+      let hv = tpl_1(v);
+      let idx = tpl_2(v);
+      sb.keyRequest(hv, truncate(idx));
+   endrule
+
+   rule issueCmd_keyRd_1;
+      $display("sb.keyGrant() = %b, reqCnt_keyRd = %d, reqCnt_keyWr = %d",sb.keyGrant(), reqCnt_keyRd, reqCnt_keyWr);
+      if (sb.keyGrant()) begin
+         arbiter.clients[1].request();
+      end
+      else if (reqCnt_keyRd < reqCnt_keyWr) begin
+         arbiter.clients[1].request();
       end
    endrule
    
-   rule issueCmd_keyRd if (busy_keyRd);
-      if ( reqCnt_keyRd >= reqMax_keyRd ) begin
-         busy_keyRd <= False;
-         keyRd_inflight.deq();
+   rule issueCmd_keyRd_2 if (grant_vector[1]);
+      let reqMax_keyRd = reqMax_keyRdQ.first();
+      let v = keyRd_reqs.first();
+      let hv = tpl_1(v);
+      let idx = tpl_2(v);
+  
+      if ( reqCnt_keyRd + 1 >= reqMax_keyRd ) begin
+         reqMax_keyRdQ.deq();
+         currCmd_keyRd.deq();
+         reqCnt_keyRd <= 0;
       end
       else begin
-         let req <- toGet(keyRd_ddrReqs).get();
-         arbiter.dramServers[2].request.put(DRAMReq{rnw:True, addr: req.addr, data:?, numBytes: req.numBytes});
          reqCnt_keyRd <= reqCnt_keyRd + 1;
       end
    endrule
+
+
+   //////////write header rules///////////
    
-   //////////write key rules///////////
+   Reg#(Bit#(32)) reqCnt_hdrWr <- mkReg(0);
+   FIFO#(Bit#(32)) reqMax_hdrWrQ <- mkFIFO();
+   FIFO#(Bit#(8)) idxQ_hdrWr <- mkFIFO();
    
-   Reg#(Bool) busy_keyWr <- mkReg(False);
-   
-   Reg#(Bit#(32)) reqCnt_keyWr <- mkReg(-1);
-   Reg#(Bit#(32)) reqMax_keyWr <- mkReg(0);
-   
-   rule doStart_keyWr if (!busy_keyWr);
-      let v = keyWr_reqs.first();
+   rule doStart_hdrWr;
+      let v = hdrWr_reqs.first();
       let hv = tpl_1(v);
-      let numReqs = tpl_2(v);
-      if (keyRd_inflight.notEmpty()) begin
-         let inflight = keyRd_inflight.first();
-         if ( inflight != hv ) begin
-            reqCnt_keyWr <= 0;
-            reqMax_keyWr <= numReqs;
-            keyWr_reqs.deq;
-            keyWr_inflight.enq(hv);
-            busy_keyWr <= True;
-         end
-      end
-      else begin
-         reqCnt_keyWr <= 0;
-         reqMax_keyWr <= numReqs;
-         keyWr_reqs.deq;
-         keyWr_inflight.enq(hv);
-         busy_keyWr <= True;
-      end
+      let idx = tpl_2(v);
+      let numReqs = tpl_3(v);
+      
+      reqMax_hdrWrQ.enq(numReqs);
+      idxQ_hdrWr.enq(idx);
+      hdrWr_reqs.deq;
    endrule
    
-   rule issueCmd_keyWr if (busy_keyWr);
-      if ( reqCnt_keyWr >= reqMax_keyWr ) begin
-         busy_keyWr <= False;
-         keyWr_inflight.deq();
+   rule issueCmd_hdrWr if (hdrWr_ddrReqs.notEmpty);
+      arbiter.clients[2].request;
+   endrule
+   
+   rule issueCmd_hdrWr_2 if (grant_vector[2]);
+      let idx = idxQ_hdrWr.first();
+      let reqMax_hdrWr = reqMax_hdrWrQ.first();
+      if ( reqCnt_hdrWr + 1 >= reqMax_hdrWr ) begin
+         idxQ_hdrWr.deq();
+         reqMax_hdrWrQ.deq();
+         reqCnt_hdrWr <= 0;
+         sb.doneHdrWrite(truncate(idx));
       end
       else begin
-         let req <- toGet(keyWr_ddrReqs).get();
-         arbiter.dramServers[3].request.put(DRAMReq{rnw:False, addr: req.addr, data:req.data, numBytes: req.numBytes});
+         reqCnt_hdrWr <= reqCnt_hdrWr + 1;
+      end
+   endrule
+            
+   //////////write key rules///////////
+   
+   FIFO#(Bit#(32)) reqMax_keyWrQ <- mkFIFO();
+   FIFO#(Bit#(8)) idxQ_keyWr <- mkFIFO();
+   
+   rule doStart_keyWr;
+      let v = keyWr_reqs.first();
+      let hv = tpl_1(v);
+      let idx = tpl_2(v);
+      let numReqs = tpl_3(v);
+      
+      if (numReqs > 0) begin
+         reqMax_keyWrQ.enq(numReqs);
+         idxQ_keyWr.enq(idx);
+      end
+      else begin
+         sb.doneKeyWrite(truncate(idx));
+      end
+      keyWr_reqs.deq;
+   endrule
+   
+   rule issueCmd_keyWr if (keyWr_ddrReqs.notEmpty);
+      //$display("here");
+      arbiter.clients[3].request;
+   endrule
+   
+   rule issueCmd_keyWr_2 if (grant_vector[3]);
+      let v = keyWr_ddrReqs.first;
+      let idx = idxQ_keyWr.first;
+      let reqMax_keyWr = reqMax_keyWrQ.first();
+      if ( reqCnt_keyWr + 1 >= reqMax_keyWr ) begin
+         idxQ_keyWr.deq();
+         reqMax_keyWrQ.deq();
+         reqCnt_keyWr <= 0;
+         sb.doneKeyWrite(truncate(idx));
+      end
+      else begin
          reqCnt_keyWr <= reqCnt_keyWr + 1;
       end
    endrule
+            
+   /*
+   for (Integer i = 0; i < 4; i = i + 1) begin
+      rule doRequest if (ddrReqFifos[i].notEmpty);
+         arbiter.clients[i].request;
+      endrule
+   end
+   */
+         
+   rule doGrant;
+      let grant = arbiter.grant_id;
+      let args <- toGet(ddrReqFifos[grant]).get;
+      grant_vector[grant].send();
+      $display("\x1b[31m(%t)HtArbiter issue request from %d\x1b[0m", $time, grant);
+      dramCmdQ.enq(DRAMReq{rnw:args.rnw, addr: args.addr, data: args.data, numBytes: args.numBytes});
+      if (args.rnw)
+         tagQ.enq(truncate(grant));
+      
+   endrule
+      
+   /*rule dereturn;
+      let tag <- toGet(tagQ).get;
+      ddrRespFifos[tag].enq(0);
+   endrule*/
+   
+   rule doRecv;
+      let data <- toGet(dramDataQ).get;
+      let tag <- toGet(tagQ).get;
+      ddrRespFifos[tag].enq(data);
+   endrule
+
    
    
    interface DRAMReadIfc hdrRd;
-      method Action start(Bit#(32) hv, Bit#(32) numReqs);
-         hdrRd_reqs.enq(tuple2(hv, numReqs));
+      method Action start(Bit#(32) hv, Bit#(8) idx, Bit#(32) numReqs);
+         hdrRd_reqs.enq(tuple3(hv, idx, numReqs));
+      endmethod
+      method ActionValue#(Bit#(8)) getReqId();
+         let v <- toGet(reqIdQ).get();
+         return v;
       endmethod
       interface Put request = toPut(hdrRd_ddrReqs);
       interface Get response = toGet(hdrRd_ddrResps);
    endinterface
   
    interface DRAMReadIfc keyRd;
-      method Action start(Bit#(32) hv, Bit#(32) numReqs);
-         keyRd_reqs.enq(tuple2(hv, numReqs));
+      method Action start(Bit#(32) hv, Bit#(8) idx, Bit#(32) numReqs);
+         keyRd_reqs.enq(tuple3(hv, idx, numReqs));
+      endmethod
+      method ActionValue#(Bit#(8)) getReqId();
+         return ?;
       endmethod
       interface Put request = toPut(keyRd_ddrReqs);
       interface Get response = toGet(keyRd_ddrResps);
    endinterface
    
    interface DRAMWriteIfc hdrWr;
-      method Action start(Bit#(32) hv, Bit#(32) numReqs);
-         hdrWr_reqs.enq(tuple2(hv, numReqs));
+      method Action start(Bit#(32) hv, Bit#(8) idx, Bit#(32) numReqs);
+         hdrWr_reqs.enq(tuple3(hv, idx, numReqs));
       endmethod
       interface Put request = toPut(hdrWr_ddrReqs);
    endinterface
       
    interface DRAMWriteIfc keyWr;
-      method Action start(Bit#(32) hv, Bit#(32) numReqs);
-         keyWr_reqs.enq(tuple2(hv, numReqs));
+      method Action start(Bit#(32) hv, Bit#(8) idx, Bit#(32) numReqs);
+         keyWr_reqs.enq(tuple3(hv, idx, numReqs));
       endmethod
       interface Put request = toPut(keyWr_ddrReqs);
    endinterface
   
-   interface dramClient = arbiter.dramClient;
+   interface DRAMClient dramClient;
+      interface Get request = toGet(dramCmdQ);
+      interface Put response = toPut(dramDataQ);
+   endinterface
 
 endmodule
 

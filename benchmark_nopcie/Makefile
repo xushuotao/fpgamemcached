@@ -4,7 +4,6 @@ S2H = SimpleRequest
 H2S = SimpleIndication
 BSVFILES = MemEngineTG.bsv \
 	../chipscope/IlaWrapper.bsv \
-	$(SRC_BSV)/packet/Packet.bsv \
 	Simple.bsv \
 	$(SRC_BSV)/Proc.bsv \
 	$(SRC_BSV)/DMAHelper.bsv \
@@ -14,11 +13,12 @@ BSVFILES = MemEngineTG.bsv \
 	$(SRC_BSV)/arbiter/MyArbiter.bsv \
 	$(SRC_BSV)/arbiter/DRAMArbiter.bsv \
 	$(SRC_BSV)/arbiter/HtArbiter.bsv \
-	$(SRC_BSV)/hashtable/HeaderReader.bsv \
-	$(SRC_BSV)/hashtable/KeyReader.bsv \
-	$(SRC_BSV)/hashtable/HeaderWriter.bsv \
-	$(SRC_BSV)/hashtable/KeyWriter.bsv \
-	$(SRC_BSV)/hashtable/Hashtable.bsv \
+	$(SRC_BSV)/hashtable_optimized/Scoreboard.bsv \
+	$(SRC_BSV)/hashtable_optimized/HeaderReader.bsv \
+	$(SRC_BSV)/hashtable_optimized/KeyReader.bsv \
+	$(SRC_BSV)/hashtable_optimized/HeaderWriter.bsv \
+	$(SRC_BSV)/hashtable_optimized/KeyWriter.bsv \
+	$(SRC_BSV)/hashtable_optimized/Hashtable.bsv \
 	$(SRC_BSV)/valuestr/Valuestr.bsv \
 	Top.bsv
 CPPFILES = testsimple.cpp

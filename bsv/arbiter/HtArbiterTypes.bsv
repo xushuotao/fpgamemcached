@@ -1,12 +1,16 @@
 
-typedef struct{
-   Bit#(64) addr;
-   Bit#(7) numBytes;
-   } DRAMReadReq deriving(Bits,Eq);
+interface ToHtArbiterIfc;
+   method Bool isIssuing();
+   method Bit#(32) currHv();
+endinterface
+
+interface ToPrevModuleIfc;
+   method Action enq(Bit#(32) v);
+endinterface
 
 typedef struct{
+   Bool rnw;
    Bit#(64) addr;
-   Bit#(7) numBytes;
    Bit#(512) data;
-   } DRAMWriteReq deriving(Bits,Eq);
-
+   Bit#(7) numBytes;
+   } HtDRAMReq deriving(Bits,Eq);

@@ -6,7 +6,8 @@ import Vector::*;
 import GetPut::*;
 import ClientServer::*;
 import Connectable::*;
-import Arbiter::*;
+//import Arbiter::*;
+import MyArbiter::*;
 
 import DRAMArbiterTypes::*;
 import DRAMController::*;
@@ -19,16 +20,16 @@ interface DRAMArbiterIfc#(numeric type numServers);
    interface DRAMClient dramClient;
 endinterface
       
-module mkDRAMArbiter#(Bool sticky)(DRAMArbiterIfc#(numServers));
+module mkDRAMArbiter(DRAMArbiterIfc#(numServers));
    
-   Arbiter_IFC#(numServers) arbiter0 <- mkArbiter(False);
-   Arbiter_IFC#(numServers) arbiter1 <- mkStickyArbiter;
+   Arbiter_IFC#(numServers) arbiter <- mkArbiter(False);
+   /*Arbiter_IFC#(numServers) arbiter1 <- mkStickyArbiter;
    
    Arbiter_IFC#(numServers) arbiter;
    if (!sticky)
       arbiter = arbiter0;
    else
-      arbiter = arbiter1;
+      arbiter = arbiter1;*/
    
    Vector#(numServers, FIFOF#(DRAMReq)) reqs<- replicateM(mkFIFOF);
    Vector#(numServers, FIFO#(Bit#(512))) resps<- replicateM(mkFIFO);
@@ -36,9 +37,6 @@ module mkDRAMArbiter#(Bool sticky)(DRAMArbiterIfc#(numServers));
    FIFO#(DRAMReq) cmdQ <- mkFIFO;
    FIFO#(Bit#(512)) dataQ <- mkFIFO;
    
-//   Reg#(Bit#(5)) nextReqIdx <- mkReg(0);
-   //Vector#(numServers, FIFO#(Bit#(5))) pendingReqIdx <- replicateM(mkSizedFIFO(32));
-   //FIFO#(Tuple2#(Bit#(TLog(numServers), Bit#(5)))) pendingReqIdx <- mkSizedFIFO(32);
    FIFO#(Bit#(TLog#(numServers))) tagQ <- mkSizedFIFO(32);
    
    Reg#(Bit#(5)) currRespIdx <- mkReg(0);
@@ -46,7 +44,7 @@ module mkDRAMArbiter#(Bool sticky)(DRAMArbiterIfc#(numServers));
    
    for (Integer i = 0; i < valueOf(numServers); i = i + 1) begin
       rule doReqs_0 if (reqs[i].notEmpty);
-         $display("DRAMClient[%d] request for grant", i);
+         //$display("DRAMClient[%d] request for grant", i);
          arbiter.clients[i].request;
       endrule
    end
@@ -54,41 +52,22 @@ module mkDRAMArbiter#(Bool sticky)(DRAMArbiterIfc#(numServers));
    rule doReqs_1;
       let grandid = arbiter.grant_id;
       let req <- toGet(reqs[grandid]).get();
-      $display("DRAMClient[%d] get grants on arbiter, readReq = %b", grandid, req.rnw);
+      //$display("DRAMClient[%d] get grants on arbiter, readReq = %b", grandid, req.rnw);
       cmdQ.enq(req);
       if (req.rnw) begin
          tagQ.enq(grandid);
       end
    endrule
-      
-      /*
-      rule doReqs_1;
-         let grant =  arbiter.clients[i].grant;
-         let req = reqs[i].first;   
-         if (grant) begin
-            $display("DRAMClient[%d] get grants on arbiter, readReq = %b", i, req.rnw);
-            cmdQ.enq(req);
-            reqs[i].deq();
-            if (req.rnw) begin
-               $display("%t: Enqueuing %d to tagQ", $time, i);
-               tagQ.enq(fromInteger(i));
-            end
-         end
-      endrule
-   end*/
 
    rule doResp;
       let data = dataQ.first;
       let returnTag = tagQ.first();
-      $display("DRAMClient[%d] get back on readReq, data = %h", returnTag, data);
+      //$display("DRAMClient[%d] get back on readReq, data = %h", returnTag, data);
       resps[returnTag].enq(data);
       //resps[0].enq(data);
       tagQ.deq();
       dataQ.deq();
    endrule
-/*   rule doDisplay;
-      $display("tagQ.first = %d, dataQ.first = %h", tagQ.first, dataQ.first);
-   endrule*/
       
    
    Vector#(numServers, DRAMServer) ds;

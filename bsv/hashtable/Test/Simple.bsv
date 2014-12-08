@@ -28,6 +28,7 @@ import DDR3Sim::*;
 import DRAMController::*;
 import Time::*;
 import Valuestr::*;
+import Connectable::*;
 
 /*
 typedef struct{
@@ -99,9 +100,13 @@ module mkSimpleRequest#(SimpleIndication indication)(SimpleRequest);
    
    let ddr3_ctrl_user <- mkDDR3Simulator();
    
+   let dram <- mkDRAMController();
+   
+   let ddr_cli_200Mhz <- mkDDR3ClientSync(dram.ddr3_cli, clockOf(dram), resetOf(dram), clockOf(ddr3_ctrl_user), resetOf(ddr3_ctrl_user));
+   mkConnection(ddr_cli_200Mhz, ddr3_ctrl_user);
+
    
    
-   let dram <- mkDRAMController(ddr3_ctrl_user);
    
    let clock <- mkLogicClock();
    
@@ -165,7 +170,7 @@ module mkSimpleRequest#(SimpleIndication indication)(SimpleRequest);
       let v = valDelimitBuf.first;
       valDelimitBuf.deq();
       valstr.valInit.initValDelimit(tpl_1(v),tpl_2(v), tpl_3(v));
-      htable.initTable(tpl_1(v));
+      htable.init.initTable(tpl_1(v));
    endrule
 
    rule process_init2;

@@ -152,6 +152,7 @@ uint32_t jenkins_hash(
     /*------ all but last block: aligned reads and affect 32 bits of (a,b,c) */
     while (length > 12)
     {
+        printf("\x1b[31m" "Software:: k[0] = %04x, k[1] = %04x, k[2] = %04x" "\x1b[0m" "\n", k[0], k[1], k[2]);
       a += k[0];
       b += k[1];
       c += k[2];

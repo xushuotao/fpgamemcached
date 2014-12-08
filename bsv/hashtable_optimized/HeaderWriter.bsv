@@ -5,7 +5,6 @@ import GetPut::*;
 import Vector::*;
 
 import HashtableTypes::*;
-import Packet::*;
 import HtArbiterTypes::*;
 import HtArbiter::*;
 import Time::*;
@@ -51,90 +50,61 @@ module mkHeaderWriter#(ValAlloc_ifc valAlloc, DRAMWriteIfc dramEP)(HeaderWriterI
    FIFO#(Tuple2#(Bit#(64), Bit#(64))) valAddrFifo <- mkFIFO();
    FIFO#(ItemHeader) newHeaderQ <- mkFIFO;
    
-   Reg#(Bool) busy <- mkReg(False);
-
    
    FIFO#(KeyWrParas) immediateQ <- mkFIFO;
    FIFO#(KeyWrParas) finishQ <- mkFIFO;
    
    //FIFOF#(Bit#(32)) currhv <- mkLFIFOF();
    
-   FIFOF#(HtDRAMReq) dramReq <- mkLFIFOF();
 
 
-   PacketIfc#(LineWidth, HeaderSz, 0) packetEng_hdr <- mkPacketEngine();
+   //PacketIfc#(LineWidth, HeaderSz, 0) packetEng_hdr <- mkPacketEngine();
    //PacketIfc#(128, 232, 0) packetEng_hdr <- mkPacketEngine(); 
 
-   rule prepWrite_1(busy);
+   //(*descending_urgency = "prepWrite_1, start"*)
+   
+   rule prepWrite_1;
       //$display("%h",old_header[ind]);
       let newValAddr <- valAlloc.newAddrResp();
       let args = immediateQ.first();
-      newHeaderQ.enq(ItemHeader{idle: 0,
-                                keylen : args.keyLen, // key length
-                                clsid : 0 , // slab class id
+      newHeaderQ.enq(ItemHeader{keylen : args.keyLen, // key length
                                 valAddr : newValAddr,//zeroExtend(hv), 
-                                refcount : 0,
-                                exptime : 0, // expiration time
                                 currtime : args.time_now,// last accessed time
-                                nBytes : args.nBytes //
+                                nBytes : truncate(args.nBytes) //
                                 });
       valAddrFifo.enq(tuple2(newValAddr, args.nBytes));
-      busy <= False;
-
-      //state <= WriteHeader;
-      //packetEng_hdr.start(1, fromInteger(valueOf(HeaderTokens)));
    endrule
    
-   rule writeHeader_1;
+   rule writeHeader;
       let newHeader <- toGet(newHeaderQ).get();
-      packetEng_hdr.inPipe.put(pack(newHeader));
-   endrule
-   
-   Reg#(Bit#(8)) hdrCnt <- mkReg(0);
-   FIFO#(Bit#(8)) hdrMaxQ <- mkFIFO;
-   rule writeHeader_2;
-      let hdrMax = hdrMaxQ.first();
-      let wrVal <- packetEng_hdr.outPipe.get();
-      
-      let v = immediateQ.first();
-      let baseAddr = v.hdrAddr;
-      let wrAddr = baseAddr + extend({hdrCnt,6'b0});
-      
+      let wrVal = pack(newHeader);
+      let v <- toGet(immediateQ).get();
+      let wrAddr = v.hdrAddr;
+  
       Bit#(7) numOfBytes = fromInteger(valueOf(LineBytes));
-           
-      if (hdrCnt + 1 >= hdrMax) begin
-         numOfBytes = fromInteger(valueOf(HeaderRemainderBytes));
-         hdrMaxQ.deq;
-         immediateQ.deq;
-         finishQ.enq(v);
-         hdrCnt <= 0;
-         busy <= False;
-      end
-      else begin
-         hdrCnt <= hdrCnt + 1;
-      end
       $display("HeaderWriter wrAddr = %d, wrVal = %h, bytes = %d", wrAddr, wrVal, numOfBytes);
       dramEP.request.put(HtDRAMReq{rnw: False, addr:wrAddr, data:zeroExtend(wrVal), numBytes:numOfBytes});
-      
+      finishQ.enq(v);     
    endrule
+   Reg#(Bit#(16)) reqCnt <- mkReg(0);
+   method Action start(HdrWrParas args);
    
-   method Action start(HdrWrParas args) if (!busy);
-   
-      $display("Fourth Stage: PrepWrite");      
+      //$display("Fourth Stage: PrepWrite");      
       let old_header = args.oldHeaders;
       let cmpMask = args.cmpMask;
       let idleMask = args.idleMask;
       Bit#(TLog#(NumWays)) ind;
  
-      $display("HeaderWriter: cmpMask = %b, idleMask = %b", cmpMask, idleMask);
+      $display("HeaderWriter: cmpMask = %b, idleMask = %b, reqCnt = %d", cmpMask, idleMask, reqCnt);
+      reqCnt <= reqCnt + 1;
       if ( cmpMask != 0 ) begin
          // update the timestamp in the header;
          ind = mask2ind(cmpMask);
          
-         old_header[ind].refcount = old_header[ind].refcount + 1;
+         //old_header[ind].refcount = old_header[ind].refcount + 1;
          old_header[ind].currtime = args.time_now;
                            
-         valAddrFifo.enq(tuple2(old_header[ind].valAddr, old_header[ind].nBytes));
+         valAddrFifo.enq(tuple2(old_header[ind].valAddr, extend(old_header[ind].nBytes)));
          newHeaderQ.enq(old_header[ind]);
       end
       else begin
@@ -157,13 +127,9 @@ module mkHeaderWriter#(ValAlloc_ifc valAlloc, DRAMWriteIfc dramEP)(HeaderWriterI
          /* more interesting stuff to do here */
          // update a new header if no hit
          
-         busy <= True;
       end
    
       dramEP.start(args.hv, args.idx, extend(args.hdrNreq));
-      //hv <= args.hv;
-      packetEng_hdr.start(1, fromInteger(valueOf(HeaderTokens)));
-      hdrMaxQ.enq(args.hdrNreq);
    
       immediateQ.enq(KeyWrParas{hv: args.hv,
                                 idx: args.idx,

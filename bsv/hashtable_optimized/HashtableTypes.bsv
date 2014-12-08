@@ -3,14 +3,14 @@ import Vector::*;
 
 
 typedef struct{
-   Bit#(8) idle;
+//   Bit#(8) idle;
    Bit#(8) keylen; // key length
-   Bit#(8) clsid; // slab class id
+//   Bit#(8) clsid; // slab class id
    Bit#(64) valAddr; // valueStore address
-   Bit#(16) refcount;
-   Time_t exptime; // expiration time
+//   Bit#(16) refcount;
+//   Time_t exptime; // expiration time
    Time_t currtime;// last accessed time
-   Bit#(64) nBytes; // 16MB max
+   Bit#(24) nBytes; // 16MB
    } ItemHeader deriving(Bits, Eq);
 
 //`define HEADER_64_ALIGNED;
@@ -47,7 +47,15 @@ typedef TDiv#(MaxItemSize, LineWidth) ItemOffset;
 
 typedef TSub#(LineWidth, HeaderRemainderSz) HeaderResidualSz;
 typedef TDiv#(HeaderResidualSz,8) HeaderResidualBytes;
+/*
+`ifndef HEADER_64_ALIGNED
+typedef TSub#(HeaderResidualSz, TMul#(64,TSub#(TDiv#(HeaderResidualSz,64),1))) DtaShiftSz;
+`else
+typedef 0 DtaShfitSz;
+`endif
 
+typedef TSub#(64, DtaShiftSz) KeyShiftSz;
+*/
 
 typedef struct{
    Bit#(32) hv;

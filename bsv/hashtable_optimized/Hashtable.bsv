@@ -1,6 +1,7 @@
 package Hashtable;
 
 import Connectable::*;
+import ClientServer::*;
 import GetPut::*;
 import FIFO::*;
 import FIFOF::*;
@@ -9,9 +10,9 @@ import DRAMController::*;
 import DDR3::*;
 import Time::*;
 import Valuestr::*;
-import Packet::*;
 import HtArbiterTypes::*;
 import HtArbiter::*;
+import DRAMArbiterTypes::*;
 import DRAMArbiter::*;
 
 //`define DEBUG
@@ -23,6 +24,7 @@ import KeyWriter::*;
 
 interface HashtableInitIfc;
    method Action initTable(Bit#(64) lgOffset);
+   method Bool initialized;
 endinterface
 
 interface HashtableIfc;
@@ -61,6 +63,7 @@ module mkAssocHashtb#(Clk_ifc real_clk, ValAlloc_ifc valAlloc)(HashtableIfc);
    mkConnection(toGet(keyTks), keyReader.inPipe);
    mkConnection(keyReader.outPipe, keyWriter.inPipe);
    
+  
    rule proc0;
       let v <- hdrReader.finish();
       keyReader.start(v);
@@ -76,11 +79,35 @@ module mkAssocHashtb#(Clk_ifc real_clk, ValAlloc_ifc valAlloc)(HashtableIfc);
       keyWriter.start(v);
    endrule
 
+   DRAMArbiterIfc#(2) dramSwitch <- mkDRAMArbiter;
+   mkConnection(htArbiter.dramClient, dramSwitch.dramServers[0]);
+   
+   Reg#(PhyAddr) addr <- mkReg(0);
+   FIFO#(PhyAddr) addrMaxQ <- mkFIFO;
+   Reg#(Bool) initialized <- mkReg(False);
+   rule doinit;
+      let addrMax = addrMaxQ.first();
+      if ( addr + (fromInteger(valueOf(ItemOffset)) << 6) >= addrMax ) begin
+         addr <= 0;
+         addrMaxQ.deq;
+         initialized <= True;
+      end
+      else begin
+         addr <= addr + (fromInteger(valueOf(ItemOffset)) << 6);
+      end
+      dramSwitch.dramServers[1].request.put(DRAMReq{rnw: False,
+                                                    addr: addr, 
+                                                    data: 0,
+                                                    numBytes: 64});
+   endrule
+     
+   Reg#(Bit#(32)) hvMax <- mkRegU();
+         
       
-   method Action readTable(Bit#(8) keylen, Bit#(32) hv, Bit#(64) nBytes);
+   method Action readTable(Bit#(8) keylen, Bit#(32) hv, Bit#(64) nBytes) if (initialized);
       $display("Hashtable Request Received");
    
-      PhyAddr baseAddr = ((unpack(zeroExtend(hv)) * fromInteger(valueOf(ItemOffset))) << 6) & addrTop;
+      PhyAddr baseAddr = (unpack(zeroExtend(hvMax & hv)) * fromInteger(valueOf(ItemOffset))) << 6;// & addrTop;
       Bit#(16) totalBits = (zeroExtend(keylen) << 3) + fromInteger(valueOf(HeaderSz));
       Bit#(16) totalCnt;
       if ( (totalBits & fromInteger(valueOf(TSub#(LineWidth,1)))) == 0) begin
@@ -126,11 +153,23 @@ module mkAssocHashtb#(Clk_ifc real_clk, ValAlloc_ifc valAlloc)(HashtableIfc);
    interface HashtableInitIfc init;
       method Action initTable(Bit#(64) lgOffset);// if (state == Idle);
          //hvMax <= unpack((1 << lgOffset) - 1) / fromInteger(valueOf(ItemOffset));
-         addrTop <= (1 << lgOffset) - 1;
+         hvMax <= (1 << lgOffset) - 1;
+         PhyAddr maxAddr = ((1 << lgOffset) * fromInteger(valueOf(ItemOffset))) << 6;
+         `ifndef MEOW
+         addrTop <= maxAddr;
+         addrMaxQ.enq(maxAddr);
+         initialized <= False;
+         `else
+         initialized <= True;
+         `endif
+      endmethod
+   
+      method Bool initialized;
+         return initialized;
       endmethod
    endinterface
    
-   interface DRAMClient dramClient = htArbiter.dramClient;
+   interface DRAMClient dramClient = dramSwitch.dramClient;
 endmodule
 
 endpackage: Hashtable

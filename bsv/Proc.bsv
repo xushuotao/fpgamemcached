@@ -1,4 +1,5 @@
 import FIFO::*;
+import FIFOF::*;
 import BRAMFIFO::*;
 import Vector::*;
 import GetPut::*;
@@ -47,27 +48,29 @@ module mkMemCached#(DRAMControllerIfc dram, DMAReadIfc rdIfc, DMAWriteIfc wrIfc)
    
    
    /*****input streaming processing******/
-   FIFO#(Tuple3#(Protocol_Binary_Request_Header, Bit#(32), Bit#(32))) reqHeaderQ <- mkFIFO();
+   FIFOF#(Tuple3#(Protocol_Binary_Request_Header, Bit#(32), Bit#(32))) reqHeaderQ <- mkFIFOF();
    FIFO#(Bit#(64)) reqs <- mkFIFO;
    FIFO#(Bit#(64)) resps <- mkFIFO;
    
-   Reg#(State_Input) state_input <- mkReg(Idle);
+   Reg#(State_Input) state_input <- mkReg(ProcKeys);
    
    Reg#(Protocol_Binary_Command) opcode_reg <- mkRegU();
    
-   Reg#(Bit#(32)) keylen_reg <- mkRegU();
+   Reg#(Bit#(32)) keylen_reg <- mkReg(0);
    Reg#(Bit#(32)) key_cnt <- mkReg(0);
    
-   Reg#(Bit#(64)) vallen_reg <- mkRegU();
+   Reg#(Bit#(64)) vallen_reg <- mkReg(0);
    Reg#(Bit#(64)) val_cnt <- mkReg(0);
    
    
    
    FIFO#(Tuple3#(Protocol_Binary_Request_Header, Bit#(32), Bit#(32))) cmd2hash <- mkFIFO();
    FIFO#(Bit#(64)) keyFifo <- mkFIFO;
-   FIFO#(Bit#(64)) valFifo <- mkFIFO;
+   
+   /*1MB valFifo*/
+   FIFO#(Bit#(64)) valFifo <- mkSizedBRAMFIFO(131072);
 
-   rule procHeader if (state_input == Idle);
+   /*rule procHeader if (state_input == Idle);
       let v <- toGet(reqHeaderQ).get();
       
       let header = tpl_1(v);
@@ -86,20 +89,44 @@ module mkMemCached#(DRAMControllerIfc dram, DMAReadIfc rdIfc, DMAWriteIfc wrIfc)
       opcode_reg <= header.opcode;
       keylen_reg <= extend(keylen);
       vallen_reg <= extend(bodylen) - extend(keylen);
-   endrule
+   endrule*/
       
    rule procKey if (state_input == ProcKeys);
-      let word <- toGet(reqs).get();
-      keyFifo.enq(word);
+
       if ( key_cnt + 8 >=  keylen_reg ) begin
          if (opcode_reg == PROTOCOL_BINARY_CMD_SET) begin
             state_input <= ProcVals;
          end
          else begin
-            state_input <= Idle;
+            if ( reqHeaderQ.notEmpty() ) begin
+               let v <- toGet(reqHeaderQ).get();
+               let header = tpl_1(v);
+               //  state_input <= ProcKeys;
+               cmd2hash.enq(v);
+               let keylen = header.keylen;
+               let bodylen = header.bodylen;
+               key_cnt <= 0;
+               val_cnt <= 0;
+               opcode_reg <= header.opcode;
+               keylen_reg <= extend(keylen);
+               vallen_reg <= extend(bodylen) - extend(keylen);
+            end
+            else begin
+               key_cnt <= 0;
+               val_cnt <= 0;
+               keylen_reg <= 0;
+               vallen_reg <= 0;
+            end
+        //    state_input <= Idle;
          end
       end
-      key_cnt <= key_cnt + 8;
+      else
+         key_cnt <= key_cnt + 8;
+      
+      if ( keylen_reg > 0) begin
+         let word <- toGet(reqs).get();
+         keyFifo.enq(word);
+      end
    endrule
    
    rule procVal if (state_input == ProcVals);
@@ -107,15 +134,38 @@ module mkMemCached#(DRAMControllerIfc dram, DMAReadIfc rdIfc, DMAWriteIfc wrIfc)
       let word <- toGet(reqs).get();
       valFifo.enq(word);
       if ( val_cnt + 8 >= vallen_reg) begin
-         state_input <= Idle;
+         //state_input <= Idle;
+         if ( reqHeaderQ.notEmpty()) begin
+            let v <- toGet(reqHeaderQ).get();
+            let header = tpl_1(v);
+            //  state_input <= ProcKeys;
+            cmd2hash.enq(v); 
+            let keylen = header.keylen;
+            let bodylen = header.bodylen;
+            key_cnt <= 0;
+            val_cnt <= 0;
+            opcode_reg <= header.opcode;
+            keylen_reg <= extend(keylen);
+            vallen_reg <= extend(bodylen) - extend(keylen);
+         end
+         
+         else begin
+            key_cnt <= 0;
+            val_cnt <= 0;
+            keylen_reg <= 0;
+            vallen_reg <= 0;
+         end
+         //    state_input <= Idle;
+         state_input <= ProcKeys;
       end
-      val_cnt <= val_cnt + 8;
+      else
+         val_cnt <= val_cnt + 8;
    endrule
    
    
    /***********Processing Reqs************/
    
-   DRAMArbiterIfc#(3) arbiter <- mkDRAMArbiter(False);
+   DRAMArbiterIfc#(3) arbiter <- mkDRAMArbiter;
    
    let clk <- mkLogicClock;
    
@@ -137,7 +187,7 @@ module mkMemCached#(DRAMControllerIfc dram, DMAReadIfc rdIfc, DMAWriteIfc wrIfc)
    
    mkConnection(arbiter.dramClient, dram);
   
-   FIFO#(Bit#(64)) keyBuf <- mkSizedBRAMFIFO(32);
+   FIFO#(Bit#(64)) keyBuf <- mkSizedFIFO(32);
    
    
    FIFO#(Tuple3#(Protocol_Binary_Request_Header, Bit#(32), Bit#(32))) hash2table <- mkFIFO;
@@ -180,7 +230,8 @@ module mkMemCached#(DRAMControllerIfc dram, DMAReadIfc rdIfc, DMAWriteIfc wrIfc)
    
    FIFO#(Tuple2#(Protocol_Binary_Response_Header, Bit#(32))) respHeaderQ <- mkFIFO;
    FIFO#(Bit#(64)) respDataQ <- mkFIFO;
-      
+
+   Reg#(Bit#(16)) reqCnt <- mkReg(0);
    rule doVal;
       let vv <- toGet(table2valstr).get();
       let cmd = tpl_1(vv);
@@ -195,15 +246,15 @@ module mkMemCached#(DRAMControllerIfc dram, DMAReadIfc rdIfc, DMAWriteIfc wrIfc)
       
       $display("doVal: opcode = %h, addr = %d, nBytes = %d", opcode, addr, nBytes);
       
+      reqCnt <= reqCnt + 1;
       if (opcode == PROTOCOL_BINARY_CMD_GET) begin
-         $display("doVal: Get Cmd");
+         $display("doVal: Get Cmd, reqCnt = %d", reqCnt);
          valstr_acc.readReq(addr, nBytes);
          wrIfc.writeReq(wp, nBytes);
       end
       else if (opcode == PROTOCOL_BINARY_CMD_SET) begin
-         $display("doVal: Set Cmd");
+         $display("doVal: Set Cmd, reqCnt = %d", reqCnt);
          valstr_acc.writeReq(addr, nBytes);
-         //wrIfc.writeReq(wp,);
       end 
       
       respHeaderQ.enq(tuple2(Protocol_Binary_Response_Header{magic: PROTOCOL_BINARY_RES,
@@ -228,6 +279,7 @@ module mkMemCached#(DRAMControllerIfc dram, DMAReadIfc rdIfc, DMAWriteIfc wrIfc)
    
    rule doVal_3;
       let v <- valstr_acc.readVal();
+      //$display("Valstr received val = %h", v);
       respDataQ.enq(v);
    endrule
    
@@ -255,6 +307,7 @@ module mkMemCached#(DRAMControllerIfc dram, DMAReadIfc rdIfc, DMAWriteIfc wrIfc)
    rule procVal_resp if (state_output == ProcVals);
       let v <- toGet(respDataQ).get();
       resps.enq(v);
+      //$display("Trying to put data into MemEngs, data = %h", v);
       if ( val_cnt_Resp + 8 >= vallen_reg_Resp) begin
          state_output <= Idle;
       end

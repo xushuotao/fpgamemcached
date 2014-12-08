@@ -11,6 +11,13 @@ import IlaWrapper::*;
 
 import FIFO::*;
 
+typedef struct{
+   Bit#(32) numBursts;
+   Bit#(32) lastBurstSz;
+   Bit#(32) buffPtr;
+} DMAReq deriving (Bits, Eq);
+   
+
 interface DMAReadIfc;
    method Action readReq(Bit#(32) rp, Bit#(64) nBytes);
    //method ActionValue#(Bit#(64)) readVal();
@@ -30,7 +37,8 @@ module mkDMAReader#(Server#(MemengineCmd,Bool) rServer,
                     )(DMAReadIfc);
 
 
-   Reg#(Bit#(32)) burstCnt <- mkRegU();
+   Reg#(Bit#(32)) burstCnt <- mkReg(0);
+   /*
    Reg#(Bit#(32)) numBursts <- mkRegU();
    Reg#(Bit#(32)) lastBurstSz <- mkRegU();
    Reg#(Bit#(32)) buffPtr <- mkRegU();
@@ -38,7 +46,7 @@ module mkDMAReader#(Server#(MemengineCmd,Bool) rServer,
    Reg#(Bool) busy <- mkReg(False);
    
    Reg#(Bit#(32)) burstIterCnt <- mkRegU();
-   Reg#(Bit#(32)) numOfResp <- mkRegU();
+   Reg#(Bit#(32)) numOfResp <- mkRegU();*/
 
    FIFO#(Bit#(64)) respDtaQ <- mkFIFO;
    
@@ -46,30 +54,38 @@ module mkDMAReader#(Server#(MemengineCmd,Bool) rServer,
    
    mkConnection(toGet(serverReqFifo), rServer.request);
    
-   rule drive_read if (busy && burstCnt <= numBursts);
+   FIFO#(DMAReq) reqQ <- mkFIFO();
+   
+   rule drive_read;// if (busy && burstCnt <= numBursts);
       //$display("drRdRq: burstCnt = %d, numBursts = %d", burstCnt, numBursts);
+      let args = reqQ.first();
+      let buffPtr = args.buffPtr;
+      let lastBurstSz = args.lastBurstSz;
+      let numBursts = args.numBursts;
       if ( burstCnt == numBursts ) begin
          if ( lastBurstSz != 0) begin
             //$display("Last request");
             //rServer.request.put(MemengineCmd{sglId:buffPtr, base:extend(burstCnt<<7), len:truncate(lastBurstSz), burstLen:truncate(lastBurstSz)});
             serverReqFifo.enq(MemengineCmd{sglId:buffPtr, base:extend(burstCnt<<7), len:truncate(lastBurstSz), burstLen:truncate(lastBurstSz)});
          end
+         reqQ.deq();
+         burstCnt <= 0;
       end
       else begin
          //$display("Normal request");
         // rServer.request.put(MemengineCmd{sglId:buffPtr, base:extend(burstCnt<<7), len:128, burstLen:128});
          serverReqFifo.enq(MemengineCmd{sglId:buffPtr, base:extend(burstCnt<<7), len:128, burstLen:128});
+         burstCnt <= burstCnt + 1;
       end
-      burstCnt <= burstCnt + 1;
    endrule
 
    FIFO#(Bool) finishFIFO <- mkFIFO;
    rule finish_fifo;
       let rv1 <- rServer.response.get;
-      finishFIFO.enq(True);
+      //finishFIFO.enq(True);
    endrule
    
-   rule read_finish if (busy);
+/*   rule read_finish if (busy);
       //$display("read_finish %d", burstIterCnt, numOfResp);
       if ( burstIterCnt < numOfResp) begin
          //let rv0 <- rServer.response.get;
@@ -80,7 +96,7 @@ module mkDMAReader#(Server#(MemengineCmd,Bool) rServer,
       end
       
       burstIterCnt <= burstIterCnt + 1;
-   endrule
+   endrule*/
    
    rule read_Val;
       let v <- toGet(rPipe).get;
@@ -89,26 +105,30 @@ module mkDMAReader#(Server#(MemengineCmd,Bool) rServer,
       respDtaQ.enq(v); 
    endrule
    
-   method Action readReq(Bit#(32) rp, Bit#(64) nBytes) if (!busy);
+   method Action readReq(Bit#(32) rp, Bit#(64) nBytes);// if (!busy);
       dmaDebug.setAddr(rp);
       dmaDebug.setBytes(nBytes);
    
-      burstCnt <= 0;
-      numBursts <= truncate(nBytes >> 7);
+      //burstCnt <= 0;
+      Bit#(32) numBursts = truncate(nBytes >> 7);
+      Bit#(32) lastBurstSz;
+      Bit#(32) buffPtr;
       if ( nBytes[2:0] == 0 )
-         lastBurstSz <= extend(nBytes[6:0]);
+         lastBurstSz = extend(nBytes[6:0]);
       else
-         lastBurstSz <= extend(nBytes[6:3]+1)<<3;
+         lastBurstSz = extend(nBytes[6:3]+1)<<3;
    
-      buffPtr <= rp;
-      busy <= True;
+      buffPtr = rp;
+      //busy <= True;
       
-      burstIterCnt <= 0;
+      /*burstIterCnt <= 0;
       if (nBytes[6:0] == 0 )
          numOfResp <= truncate(nBytes >> 7);
       else
          numOfResp <= truncate(nBytes >> 7) + 1;
+      */
    
+      reqQ.enq(DMAReq{numBursts: numBursts, lastBurstSz: lastBurstSz, buffPtr: buffPtr});
    endmethod
    
 /*   method ActionValue#(Bit#(64)) readVal();

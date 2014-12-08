@@ -44,7 +44,7 @@ int main(int argc, const char **argv)
   }
 
   srand(time(NULL));
-  size_t keylen = rand()%1000;
+  size_t keylen = rand()%257;
   char* key = new char[keylen];
   for (uint32_t i = 0; i < keylen; i++) {
      key[i] = rand();
@@ -54,7 +54,22 @@ int main(int argc, const char **argv)
   
   hash_val = jenkins_hash((void*)key, keylen); 
   fprintf(stderr,"Main:: jenkins: %d\n", hash_val);
+  
+  uint64_t* k = (uint64_t*)key;
+  //TripleWord triple;
 
+  device->start(keylen);
+
+  while ( keylen >= 8){
+    device->key(*k);
+    k++;
+    keylen -= 8;
+  }
+
+  if (keylen > 0) {
+    device->key((*k) &  (((uint64_t)1 << (keylen*8))-1));
+  }
+/*
   uint32_t* k = (uint32_t*)key;
   TripleWord triple;
 
@@ -83,9 +98,9 @@ int main(int argc, const char **argv)
      case 3 : triple.low=k[0]&0xffffff; device->key(triple); break;
      case 2 : triple.low=k[0]&0xffff; device->key(triple); break;
      case 1 : triple.low=k[0]&0xff; device->key(triple); break;
-     case 0 : break;  /* zero length strings require no mixing */
+     case 0 : break;  // zero length strings require no mixing 
   }
-                                     
+     */                                
   delete key;
                                      
   

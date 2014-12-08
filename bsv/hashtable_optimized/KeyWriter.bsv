@@ -4,7 +4,7 @@ import SpecialFIFOs::*;
 import GetPut::*;
 import Vector::*;
 
-import Packet::*;
+import Serializer::*;
 import HtArbiterTypes::*;
 import HtArbiter::*;
 import HashtableTypes::*;
@@ -17,7 +17,8 @@ interface KeyWriterIfc;
 endinterface
 
 module mkKeyWriter#(DRAMWriteIfc dramEP)(KeyWriterIfc);
-   DepacketIfc#(64, LineWidth, HeaderRemainderSz) depacketEng_key <- mkDepacketEngine();
+   //DepacketIfc#(64, LineWidth, HeaderRemainderSz) depacketEng_key <- mkDepacketEngine();
+   DeserializerIfc depacketEng_key <- mkDeserializer();
    FIFO#(Bit#(64)) keyBuf <- mkFIFO;
    
    Reg#(StateKeyWriter) state <- mkReg(Idle);
@@ -42,22 +43,7 @@ module mkKeyWriter#(DRAMWriteIfc dramEP)(KeyWriterIfc);
       let keyMax = keyMaxQ.first();
       let baseAddr = addrQ.first();
       let wrAddr = baseAddr + extend({keyCnt, 6'b0});
-      if ( keyCnt < keyMax) begin
-         let v <- depacketEng_key.outPipe.get();
-         if (keyCnt == 0) begin
-            $display("wrAddr = %d, wrVal = %h, bytes = %d", wrAddr + fromInteger(valueOf(HeaderRemainderBytes)), v, fromInteger(valueOf(HeaderResidualBytes)));
-            dramEP.request.put(HtDRAMReq{rnw: False,
-                                         addr:wrAddr + fromInteger(valueOf(HeaderRemainderBytes)), 
-                                         data:zeroExtend(v)>>fromInteger(valueOf(HeaderRemainderSz)),
-                                         numBytes:fromInteger(valueOf(HeaderResidualBytes))});
-         end
-         else begin
-            $display("wrAddr = %d, wrVal = %h, bytes = %d", wrAddr, v, fromInteger(valueOf(LineBytes)));
-            dramEP.request.put(HtDRAMReq{rnw: False,
-                                         addr:wrAddr, 
-                                         data:zeroExtend(v),
-                                         numBytes:fromInteger(valueOf(LineBytes))});
-         end
+      if ( keyCnt + 1 < keyMax) begin
          keyCnt <= keyCnt + 1;
       end
       else begin
@@ -66,13 +52,27 @@ module mkKeyWriter#(DRAMWriteIfc dramEP)(KeyWriterIfc);
          keyCnt <= 0;
          state <= Idle;
       end
+      
+      let v <- depacketEng_key.outPipe.get();
+      /*if (keyCnt == 0) begin
+         $display("wrAddr = %d, wrVal = %h, bytes = %d", wrAddr + fromInteger(valueOf(HeaderRemainderBytes)), v, fromInteger(valueOf(HeaderResidualBytes)));
+         dramEP.request.put(HtDRAMReq{rnw: False,
+                                      addr:wrAddr + fromInteger(valueOf(HeaderRemainderBytes)), 
+                                      data:zeroExtend(v)>>fromInteger(valueOf(HeaderRemainderSz)),
+                                      numBytes:fromInteger(valueOf(HeaderResidualBytes))});
+         end
+      else begin*/
+      $display("wrAddr = %d, wrVal = %h, bytes = %d", wrAddr, v, fromInteger(valueOf(LineBytes)));
+      dramEP.request.put(HtDRAMReq{rnw: False,
+                                   addr:wrAddr, 
+                                   data:zeroExtend(v),
+                                   numBytes:fromInteger(valueOf(LineBytes))});
+      //end
    endrule
 
    rule doBypass (state == ByPass);
       let keyMax = keyMaxQ.first();
-      if ( keyCnt < keyMax) begin
-         $display("KeyWriter Bypassing Keys");
-         let v <- depacketEng_key.outPipe.get();
+      if ( keyCnt + 1 < keyMax) begin
          keyCnt <= keyCnt + 1;
       end
       else begin
@@ -80,12 +80,17 @@ module mkKeyWriter#(DRAMWriteIfc dramEP)(KeyWriterIfc);
          keyCnt <= 0;
          state <= Idle;
       end
+      let v <- depacketEng_key.outPipe.get();
+      $display("KeyWriter Bypassing Keys, value = %h", v);
    endrule
    
+   Reg#(Bit#(16)) reqCnt <- mkReg(0);
    
    method Action start(KeyWrParas args);
       Bit#(8) numKeytokens;
-      $display("KeyWriter starts");
+      //$display("Keywriter starts, cmpMask = %b, reqCnt = %d", args.cmpMask, reqCnt);
+      $display("Keywriter starts: keyAddr = %d, keyNreq = %d, cmpMask = %b, idleMask = %b, reqCnt = %d", args.keyAddr, args.keyNreq, args.cmpMask, args.idleMask, reqCnt);
+      reqCnt <= reqCnt + 1;
       if ( (args.keyLen & 7) == 0 ) begin
          numKeytokens = args.keyLen >> 3;
       end
@@ -93,7 +98,7 @@ module mkKeyWriter#(DRAMWriteIfc dramEP)(KeyWriterIfc);
          numKeytokens = (args.keyLen >> 3) + 1;
       end
    
-      depacketEng_key.start(extend(args.keyNreq), extend(numKeytokens));
+      depacketEng_key.start(numKeytokens);
    
       if (args.cmpMask != 0) begin
          nextStateQ.enq(ByPass);

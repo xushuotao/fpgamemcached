@@ -330,7 +330,7 @@ interface ValAlloc_ifc;
 endinterface
 
 interface ValInit_ifc;
-   method Action initValDelimit(Bit#(64) lgSz1, Bit#(64) lgSz2, Bit#(64) lgSz3);
+   method Action initValDelimit(Bit#(64) randMax1, Bit#(64) randMax2, Bit#(64) randMax3, Bit#(64) lgSz1, Bit#(64) lgSz2, Bit#(64) lgSz3);
    method Action initAddrDelimit(Bit#(64) lgOffset1, Bit#(64) lgOffset2, Bit#(64) lgOffset3);
 endinterface
 
@@ -381,14 +381,17 @@ module mkValManager(ValManage_ifc);
    Reg#(Bit#(64)) reg_lgSz1 <- mkRegU();
    Reg#(Bit#(64)) reg_lgSz2 <- mkRegU();
    Reg#(Bit#(64)) reg_lgSz3 <- mkRegU();
+   Reg#(Bit#(64)) reg_randMax1 <- mkRegU();
+   Reg#(Bit#(64)) reg_randMax2 <- mkRegU();
+   Reg#(Bit#(64)) reg_randMax3 <- mkRegU();
    
    Reg#(Bit#(64)) reg_size1 <- mkRegU();
    Reg#(Bit#(64)) reg_size2 <- mkRegU();
    Reg#(Bit#(64)) reg_size3 <- mkRegU();
    
-   Reg#(Bit#(64)) reg_lgOffset1 <- mkRegU();
-   Reg#(Bit#(64)) reg_lgOffset2 <- mkRegU();
-   Reg#(Bit#(64)) reg_lgOffset3 <- mkRegU();
+   //Reg#(Bit#(64)) reg_lgOffset1 <- mkRegU();
+   //Reg#(Bit#(64)) reg_lgOffset2 <- mkRegU();
+   //Reg#(Bit#(64)) reg_lgOffset3 <- mkRegU();
    
    Reg#(Bit#(64)) reg_offset1 <- mkRegU();
    Reg#(Bit#(64)) reg_offset2 <- mkRegU();
@@ -432,10 +435,13 @@ module mkValManager(ValManage_ifc);
       
       Bit#(2) whichBin;
       
-      if (nBytes <= reg_size1) begin
+      let totalSz = nBytes + (fromInteger(valueOf(ValHeaderSz))>>3);
+      
+      $display("totalSz = %d, regSize1 = %d, regSize2 = %d, regSize3 = %d", totalSz, reg_size1, reg_size2, reg_size3);
+      if ( totalSz <= reg_size1) begin
          whichBin = 0;
       end
-      else if ( nBytes <= reg_size2 ) begin
+      else if ( totalSz <= reg_size2 ) begin
          whichBin = 1;
       end
       else begin
@@ -495,7 +501,7 @@ module mkValManager(ValManage_ifc);
             nextAddr3 <= nextAddr3 + reg_size3;
          end
       end
-      
+      if (!isValid(newAddr)) $display("Out of addresses for bin = %d", whichBin);
       toRdHeader.enq(tuple2(newAddr, whichBin));
    endrule
    
@@ -524,13 +530,13 @@ module mkValManager(ValManage_ifc);
       pseudo_random <= lfsr64(pseudo_random);
       Bit#(64) addr;
       if (whichBin == 0) begin
-         addr = (reg_offset1 + pseudo_random << reg_lgSz1) & ( 1 << reg_lgOffset2 - 1);
+         addr = reg_offset1 + ((reg_randMax1 & pseudo_random) << reg_lgSz1);
       end
       else if (whichBin == 1) begin
-         addr = (reg_offset2 + pseudo_random << reg_lgSz2) & ( 1 << reg_lgOffset3 - 1);
+         addr = reg_offset2 + ((reg_randMax2 & pseudo_random) << reg_lgSz2);
       end
       else begin
-         addr = (reg_offset3 + pseudo_random << reg_lgSz3) & ( 1 << 29 - 1);
+         addr = reg_offset3 + ((reg_randMax3 & pseudo_random) << reg_lgSz3);
       end
       
       addrBuf[numOfReqs] <= addr;
@@ -580,7 +586,11 @@ module mkValManager(ValManage_ifc);
    endinterface
 
    interface ValInit_ifc valInit;
-      method Action initValDelimit(Bit#(64) lgSz1, Bit#(64) lgSz2, Bit#(64) lgSz3) if (!initValDone);
+      method Action initValDelimit(Bit#(64) randMax1, Bit#(64) randMax2, Bit#(64) randMax3, Bit#(64) lgSz1, Bit#(64) lgSz2, Bit#(64) lgSz3) if (!initValDone);
+         reg_randMax1 <= randMax1;
+         reg_randMax2 <= randMax2;
+         reg_randMax3 <= randMax3;
+ 
          reg_lgSz1 <= lgSz1;
          reg_lgSz2 <= lgSz2;
          reg_lgSz3 <= lgSz3;
@@ -589,18 +599,18 @@ module mkValManager(ValManage_ifc);
          reg_size3 <= 1 << lgSz3;
          initValDone <= True;
       endmethod
-      method Action initAddrDelimit(Bit#(64) lgOffset1, Bit#(64) lgOffset2, Bit#(64) lgOffset3) if (!initAddrDone);
-         reg_lgOffset1 <= lgOffset1;
-         reg_lgOffset2 <= lgOffset2;
-         reg_lgOffset3 <= lgOffset3;
+      method Action initAddrDelimit(Bit#(64) offset1, Bit#(64) offset2, Bit#(64) offset3) if (!initAddrDone);
+         //reg_lgOffset1 <= lgOffset1;
+         //reg_lgOffset2 <= lgOffset2;
+         //reg_lgOffset3 <= lgOffset3;
          
-         reg_offset1 <= 1 << lgOffset1;
-         reg_offset2 <= 1 << lgOffset2;
-         reg_offset3 <= 1 << lgOffset3;
+         reg_offset1 <= offset1;
+         reg_offset2 <= offset2;
+         reg_offset3 <= offset3;
    
-         nextAddr1 <= 1 << lgOffset1;
-         nextAddr2 <= 1 << lgOffset2;
-         nextAddr3 <= 1 << lgOffset3;
+         nextAddr1 <= offset1;
+         nextAddr2 <= offset2;
+         nextAddr3 <= offset3;
          initAddrDone <= True;
       endmethod
    endinterface

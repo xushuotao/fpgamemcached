@@ -49,8 +49,9 @@ interface SimpleRequest;
    method Action start(Bit#(32) numTests);
    
    /*** initialize ****/
-   method Action initValDelimit(Bit#(64) lgSz1, Bit#(64) lgSz2, Bit#(64) lgSz3);
-   method Action initAddrDelimit(Bit#(64) lgOffset1, Bit#(64) lgOffset2, Bit#(64) lgOffset3);
+   method Action initTable(Bit#(64) lgOffset);
+   method Action initValDelimit(Bit#(64) randMax1, Bit#(64) randMax2, Bit#(64) randMax3, Bit#(64) lgSz1, Bit#(64) lgSz2, Bit#(64) lgSz3);
+   method Action initAddrDelimit(Bit#(64) offset1, Bit#(64) offset2, Bit#(64) offset3);
 endinterface
 
 
@@ -107,31 +108,35 @@ module mkSimpleRequest#(SimpleIndication indication, DRAMControllerIfc dram)(Sim
    endrule
    
    rule command_issue if (started);
-      if (testCnt < testMax) begin
-         $display("Issuing command %d", testCnt);
-         if ( testCnt[0] == 0 ) begin
-            memcached.start(Protocol_Binary_Request_Header{magic:PROTOCOL_BINARY_REQ,
-                                                           opcode:PROTOCOL_BINARY_CMD_SET,
-                                                           keylen:64,
-                                                           extlen:0,
-                                                           datatype:?,
-                                                           reserved:?,
-                                                           bodylen:128,
-                                                           opaque: ?,
-                                                           cas:?}, 1,2,128,0);
+      let init = memcached.htableInit.initialized;
+      if (init) begin
+         if (testCnt == 0) cycleCnt <= 0;
+         if (testCnt < testMax) begin
+            $display("Issuing command %d", testCnt);
+            if ( testCnt[3] == 0 ) begin
+               memcached.start(Protocol_Binary_Request_Header{magic:PROTOCOL_BINARY_REQ,
+                                                              opcode:PROTOCOL_BINARY_CMD_SET,
+                                                              keylen:64,
+                                                              extlen:0,
+                                                              datatype:?,
+                                                              reserved:?,
+                                                              bodylen:128,
+                                                              opaque: ?,
+                                                              cas:?}, 1,2,128,0);
+            end
+            else begin
+               memcached.start(Protocol_Binary_Request_Header{magic:PROTOCOL_BINARY_REQ,
+                                                              opcode:PROTOCOL_BINARY_CMD_GET,
+                                                              keylen:64,
+                                                              extlen:0,
+                                                              datatype:?,
+                                                              reserved:?,
+                                                              bodylen:64,
+                                                              opaque: ?,
+                                                              cas:?}, 1,2,64,0);
+            end
+            testCnt <= testCnt + 1;
          end
-         else begin
-            memcached.start(Protocol_Binary_Request_Header{magic:PROTOCOL_BINARY_REQ,
-                                                           opcode:PROTOCOL_BINARY_CMD_GET,
-                                                           keylen:64,
-                                                           extlen:0,
-                                                           datatype:?,
-                                                           reserved:?,
-                                                           bodylen:64,
-                                                           opaque: ?,
-                                                           cas:?}, 1,2,64,0);
-         end
-         testCnt <= testCnt + 1;
       end
    endrule
 
@@ -142,19 +147,23 @@ module mkSimpleRequest#(SimpleIndication indication, DRAMControllerIfc dram)(Sim
       testMax <= numTest;
       started <= True;
       testCnt <= 0;
-      cycleCnt <= 0;
+      //cycleCnt <= 0;
       testCnt2 <= 0;
    endmethod
    
-   method Action initValDelimit(Bit#(64) lgSz1, Bit#(64) lgSz2, Bit#(64) lgSz3);
-      $display("Server initializing val store size delimiter");
-      memcached.valInit.initValDelimit(lgSz1, lgSz2, lgSz3);
+   method Action initTable(Bit#(64) lgOffset);
+      memcached.htableInit.initTable(lgOffset);
    endmethod
    
-   method Action initAddrDelimit(Bit#(64) lgOffset1, Bit#(64) lgOffset2, Bit#(64) lgOffset3);
+   method Action initValDelimit(Bit#(64) randMax1, Bit#(64) randMax2, Bit#(64) randMax3, Bit#(64) lgSz1, Bit#(64) lgSz2, Bit#(64) lgSz3);
+      $display("Server initializing val store size delimiter");
+      memcached.valInit.initValDelimit(randMax1, randMax2, randMax3, lgSz1, lgSz2, lgSz3);
+   endmethod
+   
+   method Action initAddrDelimit(Bit#(64) offset1, Bit#(64) offset2, Bit#(64) offset3);
       $display("Server initializing val store addr delimiter");
-      memcached.valInit.initAddrDelimit(lgOffset1, lgOffset2, lgOffset3);
-      memcached.htableInit.initTable(lgOffset1);
+      memcached.valInit.initAddrDelimit(offset1, offset2, offset3);
+      //memcached.htableInit.initTable(lgOffset1);
    endmethod
 
 

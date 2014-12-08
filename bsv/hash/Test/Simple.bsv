@@ -60,16 +60,17 @@ interface SimpleIndication;
    */
 endinterface
 
-
+/*
 typedef struct{
    Bit#(32) low;
    Bit#(32) mid;
    Bit#(32) high;
    } TripleWord deriving (Bits, Eq);
-
+*/
 interface SimpleRequest;
    method Action start(Bit#(32) keylen);
-   method Action key(TripleWord key);    
+//   method Action key(TripleWord key);
+   method Action key(Bit#(64) k);
     //method Action say2(Bit#(16) a, Bit#(16) b);
     //method Action say3(S1 v);
     //method Action say4(S2 v);
@@ -97,6 +98,10 @@ module mkSimpleRequest#(SimpleIndication indication)(SimpleRequest);
       jenkins.start(keylen);
    endmethod
    
+   method Action key(Bit#(64) k);
+      jenkins.putKey(k);
+   endmethod
+   /*
    method Action key(TripleWord k);
       Vector#(3, Bit#(32)) inputKeys;
       inputKeys[0] = k.low;
@@ -104,7 +109,7 @@ module mkSimpleRequest#(SimpleIndication indication)(SimpleRequest);
       inputKeys[2] = k.high;
       jenkins.putKey(pack(inputKeys));
    endmethod
-  
+  */
    /*
    method Action say1(Bit#(32) v);
       indication.heard1(v);

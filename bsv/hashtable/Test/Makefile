@@ -2,8 +2,9 @@
 S2H = SimpleRequest
 H2S = SimpleIndication
 DRAMDIR = ../../hardware_controller/dram_sim
-BSVFILES = Top.bsv Simple.bsv ../Hashtable.bsv ../../time/Time.bsv ../../valuestr/Valuestr.bsv \
-	$(DRAMDIR)/DDR3Sim.bsv $(DRAMDIR)/unaligned_naive/DRAMController.bsv
+BSVFILES =  ../../time/Time.bsv ../Hashtable.bsv ../../valuestr/Valuestr.bsv ../../packet/Packet.bsv\
+	$(DRAMDIR)/DDR3Sim.bsv $(DRAMDIR)/raw_64/DRAMController.bsv \
+	Simple.bsv Top.bsv
 CPPFILES = testsimple.cpp
 Dma = 
 PINS = Std

@@ -5,7 +5,7 @@ import GetPut::*;
 import Vector::*;
 import ClientServer::*;
 
-import Packet::*;
+import Serializer::*;
 import HtArbiterTypes::*;
 import HtArbiter::*;
 import HashtableTypes::*;
@@ -33,9 +33,7 @@ module mkKeyReader#(DRAMReadIfc dramEP)(KeyReaderIfc);
    Reg#(Bit#(8)) reqCnt_key <- mkRegU();
     
    FIFO#(Bit#(64)) keyTks <- mkFIFO;
-   
-   Vector#(NumWays, DepacketIfc#(128, HeaderSz, 0)) depacketEngs_hdr <- replicateM(mkDepacketEngine());
-   
+      
    FIFO#(HdrWrParas) immediateQ <- mkFIFO;
    FIFO#(HdrWrParas) finishQ <- mkFIFO;
    
@@ -44,7 +42,7 @@ module mkKeyReader#(DRAMReadIfc dramEP)(KeyReaderIfc);
    FIFO#(Bit#(64)) keyBuf <- mkSizedFIFO(32);
       
    rule driveRd_data (busy);//(reqCnt > 0);
-      if (reqCnt_key > 0) begin
+      if (reqCnt_key >= 1) begin
          $display("KeyReader: Sending ReadReq for Data, rdAddr_key = %d", rdAddr_key);
          dramEP.request.put(HtDRAMReq{rnw: True, addr:rdAddr_key, numBytes:64});
          rdAddr_key <= rdAddr_key + 64;
@@ -55,7 +53,8 @@ module mkKeyReader#(DRAMReadIfc dramEP)(KeyReaderIfc);
       end
    endrule
    
-   Vector#(NumWays, PacketIfc#(64, LineWidth, HeaderRemainderSz)) packetEngs_key <- replicateM(mkPacketEngine());
+   //Vector#(NumWays, PacketIfc#(64, LineWidth, HeaderRemainderSz)) packetEngs_key <- replicateM(mkPacketEngine());
+   Vector#(NumWays, SerializerIfc) packetEngs_key <- replicateM(mkSerializer);
    
    rule procData_2;
       let v <- dramEP.response.get();
@@ -86,19 +85,23 @@ module mkKeyReader#(DRAMReadIfc dramEP)(KeyReaderIfc);
    rule doRead (state == DoRead);
       Bit#(NumWays) cmpMask_temp = cmpMask;
       let keyMax = keyMaxQ.first();
-      if (keyCnt < keyMax ) begin
-         let keyToken <- toGet(keyTks).get();
-         $display("Comparing keys, keytoken == %h", keyToken);
-         keyBuf.enq(keyToken);
-         for (Integer i = 0; i < valueOf(NumWays); i=i+1) begin
-            let key <- packetEngs_key[i].outPipe.get();
-            if ( cmpMask[i] == 1 && key != keyToken ) begin
-               cmpMask_temp[i] = 0;
-            end
+            
+      let keyToken <- toGet(keyTks).get();
+      
+      keyBuf.enq(keyToken);
+      for (Integer i = 0; i < valueOf(NumWays); i=i+1) begin
+         let key <- packetEngs_key[i].outPipe.get();
+         if ( cmpMask[i] == 1 && key != keyToken ) begin
+            $display("keyReader Comparing keys, keytoken = %h, keyinMemory[%d] = %h", keyToken, i, key);
+            cmpMask_temp[i] = 0;
          end
+      end
+      
+      if (keyCnt + 1 < keyMax ) begin
          keyCnt <= keyCnt + 1;
       end
       else begin
+         $display("keyReader enqueing results, cmpMask = %b", cmpMask_temp);
          keyMaxQ.deq();
          let v <- toGet(immediateQ).get();
          v.cmpMask = cmpMask_temp;
@@ -110,21 +113,27 @@ module mkKeyReader#(DRAMReadIfc dramEP)(KeyReaderIfc);
    
    rule doBypass (state == ByPass);
       let keyMax = keyMaxQ.first();
-      if (keyCnt < keyMax ) begin
-         let keyToken <- toGet(keyTks).get();
-         $display("Bypassing keys, keytoken == %h", keyToken);
-         keyBuf.enq(keyToken);
+      if (keyCnt + 1< keyMax ) begin
          keyCnt <= keyCnt + 1;
       end
       else begin
+         let v <- toGet(immediateQ).get();
+         finishQ.enq(v);
          keyMaxQ.deq();
          keyCnt <= 0;
          state <= Idle;
       end
+      
+      let keyToken <- toGet(keyTks).get();
+      $display("Bypassing keys, keytoken == %h", keyToken);
+      keyBuf.enq(keyToken);
    endrule
    
+   Reg#(Bit#(16)) reqCnt <- mkReg(0);
+   
    method Action start(KeyRdParas args) if (!busy);
-      $display("KeyReader start: keyAddr = %d, keyNreq = %d", args.keyAddr, args.keyNreq);
+      $display("KeyReader start: keyAddr = %d, keyNreq = %d, cmpMask = %b, idleMask = %b, reqCnt = %d", args.keyAddr, args.keyNreq, args.cmpMask, args.idleMask, reqCnt);
+      reqCnt <= reqCnt + 1;
       rdAddr_key <= args.keyAddr;
       reqCnt_key <= args.keyNreq;
 
@@ -139,7 +148,7 @@ module mkKeyReader#(DRAMReadIfc dramEP)(KeyReaderIfc);
    
       if (args.cmpMask == 0) begin
          nextState.enq(ByPass);
-         finishQ.enq(HdrWrParas{hv: args.hv,
+         immediateQ.enq(HdrWrParas{hv: args.hv,
                                 idx: args.idx,
                                 hdrAddr: args.hdrAddr,
                                 hdrNreq: args.hdrNreq,
@@ -154,7 +163,7 @@ module mkKeyReader#(DRAMReadIfc dramEP)(KeyReaderIfc);
       end
       else begin
          for (Integer i = 0; i < valueOf(NumWays); i=i+1) begin
-            packetEngs_key[i].start(extend(args.keyNreq), extend(numKeytokens));
+            packetEngs_key[i].start(numKeytokens);
          end
          dramEP.start(args.hv, args.idx, extend(args.keyNreq));
          

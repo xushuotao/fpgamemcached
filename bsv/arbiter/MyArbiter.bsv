@@ -35,8 +35,8 @@ module mkArbiter#(Bool fixed) (Arbiter_IFC#(count));
    Reg#(Vector#(count, Bool)) priority_vector <- mkReg(init_value);
 
 
-   Vector#(count, Wire#(Bool)) grant_vector   <- replicateM(mkBypassWire);
-   Wire#(Bit#(TLog#(count)))   grant_id_wire  <- mkBypassWire;
+   Vector#(count, Wire#(Bool)) grant_vector   <- replicateM(mkWire);
+   Wire#(Bit#(TLog#(count)))   grant_id_wire  <- mkWire;
    Vector#(count, PulseWire) request_vector <- replicateM(mkPulseWire);
 
    rule every (any(isPulseTrue, request_vector));
@@ -46,20 +46,22 @@ module mkArbiter#(Bool fixed) (Arbiter_IFC#(count));
       Vector#(count, Bool) grant_vector_local = replicate(False);
       Bit#(TLog#(count))   grant_id_local     = 0;
 
-      Bool found = False;
-      Bool prevFound = False;
+      Bool found = True;
+      Bool flag = True;
+      //Bool prevFound = False;
 
-      for (Integer x = 0; x < icount; x = x + 1)
+      for (Integer x = 0; x < 2*icount; x = x + 1)
 
 	 begin
 
 	    Integer y = (x % icount);
 
-            prevFound = found;
+            //prevFound = found;
             
-	    if (priority_vector[y]) found = False;
+	    if (priority_vector[y] && flag) found = False;
 
 	    let a_request = request_vector[y];
+            //$display("(%t)MyArbiter, Request from %d is %d", $time, y, a_request);
 	    //zow[y] = a_request;
 
 	    if (!found && a_request)
@@ -67,18 +69,19 @@ module mkArbiter#(Bool fixed) (Arbiter_IFC#(count));
 		  grant_vector_local[y] = True;
 		  grant_id_local        = fromInteger(y);
 		  found = True;
+                  flag = False;
 	       end
-            else if (prevFound)
+           /* else if (prevFound)
                begin
                   found = True;
-               end
+               end*/
 	 end
 
       // Update the RWire
       for (Integer i = 0; i < icount; i = i + 1) begin
-         if (request_vector[i]) begin
-            grant_vector[i]  <= grant_vector_local[i];
-         end
+         //if (request_vector[i]) begin
+         grant_vector[i]  <= grant_vector_local[i];
+         //end
       end
       grant_id_wire <= grant_id_local;
 
@@ -86,8 +89,9 @@ module mkArbiter#(Bool fixed) (Arbiter_IFC#(count));
       // client now has lowest priority.
       if (any(isTrue,grant_vector_local) && !fixed)
 	 begin
-	    $display("(%5d) Updating priorities", $time);
+	    //$display("(%5d) Updating priorities", $time);
 	    priority_vector <= rotateR(grant_vector_local);
+            //priority_vector <= grant_vector_local;
 	 end
 
 

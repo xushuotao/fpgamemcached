@@ -45,6 +45,7 @@ endinterface
 
 module mkDDR3Simulator(DDR3_User_VC707_Sim);
    RegFile#(Bit#(26), DDR3Data) data <- mkRegFileFull();
+   //Vector#(TExp#(26), Reg#(DDR3Data)) data <- replicateM(mkReg(0));
    FIFO#(DDR3Data) responses <- mkFIFO();
    
    Clock user_clock <- exposeCurrentClock;
@@ -62,7 +63,7 @@ module mkDDR3Simulator(DDR3_User_VC707_Sim);
       Vector#(8, Bit#(64)) words = unpack(x);
       Vector#(8, Bit#(64)) unrotated = rotateBy(words, unpack(offset));
       return pack(unrotated);
-          endfunction
+   endfunction
    
    interface clock = user_clock;
    interface reset_n = user_reset_n;
@@ -80,11 +81,13 @@ module mkDDR3Simulator(DDR3_User_VC707_Sim);
       end
       
       Bit#(512) old_rotated = rotate(offset, data.sub(burstaddr));
+      //Bit#(512) old_rotated = rotate(offset, data[burstaddr]);
       Bit#(512) new_masked = mask & datain;
       Bit#(512) old_masked = (~mask) & old_rotated;
       Bit#(512) new_rotated = new_masked | old_masked;
       Bit#(512) new_unrotated = unrotate(offset, new_rotated);
       data.upd(burstaddr, new_unrotated);
+      //data[burstaddr] <=  new_unrotated;
       
       if (writeen == 0) begin
          responses.enq(new_rotated);

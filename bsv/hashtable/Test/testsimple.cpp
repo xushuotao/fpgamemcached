@@ -61,13 +61,13 @@ int main(int argc, const char **argv)
   device->key(0xdeadbeefdeadbeef);
   device->key(0xdeadbeefdeadbeef);
   */
-  device->start(11, 0, 1);
-  device->key(0xdeadbeefdeadbeef);
-  device->key(0xdeadbeefdeadbeef);
-  device->start(11, 0, 1);
-  device->key(0xdeadbeefdeadbeef);
-  device->key(0xdeadbeefdeadbeef);
-  sleep(2);
+  device->start(1, 0, 1);
+  device->key(0xef);
+  // device->key(0xdeadbeefdeadbeef);
+  device->start(1, 0, 1);
+  device->key(0xef);
+  //device->key(0xdeadbeefdeadbeef);
+  sleep(4);
   device->dump(dumpLimit*64);
 
 #ifdef FLAG
