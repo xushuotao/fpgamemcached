@@ -1,4 +1,4 @@
-package Serializer;
+//package Serializer;
 
 import Vector::*;
 import FIFO::*;
@@ -8,13 +8,13 @@ import GetPut::*;
 
 
 interface DeserializerIfc;
-   method Action start(Bit#(8) nInputs);
+   method Action start(Bit#(64) nInputs);
    interface Put#(Bit#(64)) inPipe;
    interface Get#(Bit#(128)) outPipe;
 endinterface
 
 interface SerializerIfc;
-   method Action start(Bit#(8) nOutputs);
+   method Action start(Bit#(64) nOutputs);
    interface Put#(Bit#(128)) inPipe;
    interface Get#(Bit#(64)) outPipe;
 endinterface
@@ -32,17 +32,18 @@ module mkDeserializer(DeserializerIfc);
       bufFifo.enq({token1, token0});
    endrule
    
-   FIFO#(Bit#(8)) cntMaxQ <- mkLFIFO;
-   Reg#(Bit#(8)) cnt <- mkReg(0);
-   method Action start(Bit#(8) nInputs);
+   FIFO#(Bit#(64)) cntMaxQ <- mkFIFO;
+   Reg#(Bit#(64)) cnt <- mkReg(0);
+   method Action start(Bit#(64) nInputs);
       cntMaxQ.enq(nInputs);
    endmethod
       
    interface Put inPipe;
       method Action put(Bit#(64) v);
          let cntMax = cntMaxQ.first();
-         if ( cnt + 1 == cntMax ) begin
-            $display("Deserializer, last token = %d, cnt = %d", v, cnt);
+         //$display("Deserializer, value = %h, cnt = %d", v, cnt);
+         if ( cnt + 1 >= cntMax ) begin
+           // $display("Deserializer, last token = %d, cnt = %d", v, cnt);
             cntMaxQ.deq();
             cnt <= 0;
             sel <= 0;
@@ -66,20 +67,21 @@ module mkSerializer(SerializerIfc);
    FIFO#(Bit#(128)) bufFifo <- mkBypassFIFO();
    FIFO#(Bit#(64)) packetFifo <- mkFIFO;
    Reg#(Bit#(1)) sel <- mkReg(0);
-   FIFO#(Bit#(8)) cntMaxQ <- mkLFIFO;
-   Reg#(Bit#(8)) cnt <- mkReg(0);
+   FIFO#(Bit#(64)) cntMaxQ <- mkFIFO;
+   Reg#(Bit#(64)) cnt <- mkReg(0);
    
    rule doSerial;
       Vector#(2,Bit#(64)) packets = unpack(bufFifo.first());
+      //$display("Putting packets[%d] = %h to outPipe", sel, packets[sel]);
       packetFifo.enq(packets[sel]);
      
       let cntMax = cntMaxQ.first();
-      if ( cnt + 1 == cntMax ) begin
+      if ( cnt + 1 >= cntMax ) begin
          cnt <= 0;
          cntMaxQ.deq();
          bufFifo.deq();
          sel <= 0;
-         $display("Serializer last token, packets[sel] = %d", packets[sel]);
+         //$display("Serializer last token, packets[sel] = %d", packets[sel]);
       end
       else begin
          if ( sel == 1 ) begin
@@ -90,7 +92,7 @@ module mkSerializer(SerializerIfc);
       end
    endrule   
    
-   method Action start(Bit#(8) nOutputs);
+   method Action start(Bit#(64) nOutputs);
       cntMaxQ.enq(nOutputs);
    endmethod
       
@@ -98,4 +100,54 @@ module mkSerializer(SerializerIfc);
    interface Get outPipe = toGet(packetFifo);
 endmodule
    
-endpackage
+//endpackage
+
+interface DeserializerTagIfc;
+   method Action start(Bit#(64) nInputs, Bit#(32) tag);
+   interface Put#(Bit#(64)) inPipe;
+   interface Get#(Tuple2#(Bit#(128), Bit#(32))) outPipe;
+endinterface
+
+module mkDeserializerTag(DeserializerTagIfc);
+   Reg#(Bit#(1)) sel <- mkReg(0);
+   Vector#(2, FIFO#(Tuple2#(Bit#(64), Bit#(32)))) packetFifos <- replicateM(mkBypassFIFO);
+   FIFO#(Tuple2#(Bit#(128), Bit#(32))) bufFifo <- mkFIFO();
+
+   
+   rule doDeserial;
+      let token0 <- toGet(packetFifos[0]).get();
+      let token1 <- toGet(packetFifos[1]).get();
+      bufFifo.enq(tuple2({tpl_1(token1), tpl_1(token0)},tpl_2(token0)));
+   endrule
+   
+   FIFO#(Tuple2#(Bit#(64), Bit#(32))) cntMaxQ <- mkFIFO;
+   Reg#(Bit#(64)) cnt <- mkReg(0);
+   method Action start(Bit#(64) nInputs, Bit#(32) tag);
+      cntMaxQ.enq(tuple2(nInputs, tag));
+   endmethod
+      
+   interface Put inPipe;
+      method Action put(Bit#(64) v);
+         let d = cntMaxQ.first();
+         let cntMax = tpl_1(d);
+         let tag = tpl_2(d);
+         //$display("Deserializer, Value = %h, cnt = %d", v, cnt);
+         if ( cnt + 1 >= cntMax ) begin
+            //$display("Deserializer, last token = %h, cnt = %d", v, cnt);
+            cntMaxQ.deq();
+            cnt <= 0;
+            sel <= 0;
+            packetFifos[sel].enq(tuple2(v, tag));
+            if ( cnt[0] == 0 ) begin
+               packetFifos[sel+1].enq(tuple2(0, tag));
+            end
+         end
+         else begin
+            sel <= sel + 1;
+            cnt <= cnt + 1;
+            packetFifos[sel].enq(tuple2(v, tag));
+         end
+      endmethod
+   endinterface    
+   interface Get outPipe = toGet(bufFifo);
+endmodule

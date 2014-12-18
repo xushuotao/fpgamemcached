@@ -47,9 +47,33 @@ module mkDRAMArbiter(DRAMArbiterIfc#(numServers));
          //$display("DRAMClient[%d] request for grant", i);
          arbiter.clients[i].request;
       endrule
+      
+      rule doReqs_1 if (arbiter.grant_id == fromInteger(i));
+         //         let grantid = arbiter.grant_id;
+         //       if ( grantid == fromInteger(i)) begin
+         let req <- toGet(reqs[i]).get();
+         //$display("DRAMClient[%d] get grants on arbiter, readReq = %b", grandid, req.rnw);
+         cmdQ.enq(req);
+         if (req.rnw) begin
+            tagQ.enq(fromInteger(i));
+         end
+         //     end
+      endrule
+      
+      rule doResp if ( tagQ.first() == fromInteger(i));
+         let data = dataQ.first;
+         //let returnTag = tagQ.first();
+         //if ( returnTag == fromInteger(i)) begin
+         //$display("DRAMClient[%d] get back on readReq, data = %h", returnTag, data);
+         resps[i].enq(data);
+         //resps[0].enq(data);
+         tagQ.deq();
+         dataQ.deq();
+        // end
+      endrule
    end
    
-   rule doReqs_1;
+   /*rule doReqs_1;
       let grandid = arbiter.grant_id;
       let req <- toGet(reqs[grandid]).get();
       //$display("DRAMClient[%d] get grants on arbiter, readReq = %b", grandid, req.rnw);
@@ -67,7 +91,8 @@ module mkDRAMArbiter(DRAMArbiterIfc#(numServers));
       //resps[0].enq(data);
       tagQ.deq();
       dataQ.deq();
-   endrule
+   endrule*/
+   
       
    
    Vector#(numServers, DRAMServer) ds;
