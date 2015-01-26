@@ -54,6 +54,7 @@ interface SimpleIndication;
    method Action finish(Bit#(64) v);
    method Action dumpReqs(MemReqType_dummy v);
    method Action dumpDta(Bit#(64) v);
+   method Action hexDump(Bit#(32) v);
 endinterface
 
 interface SimpleRequest;
@@ -61,6 +62,7 @@ interface SimpleRequest;
    method Action dumpStart();
    method Action setNetId(Bit#(32) netid);
    method Action setAuroraExtRoutingTable(Bit#(32) node, Bit#(32) portidx, Bit#(32) portsel);
+   method Action auroraStatus(Bit#(32) dummy);
 endinterface
 
 interface SimpleIfc;
@@ -104,7 +106,12 @@ module mkSimpleRequest#(SimpleIndication indication, DRAMControllerIfc dram, Clo
          remote_access.setNetId(netid);
          dut.setNetId(netid);
       endmethod
-   
+
+      method Action auroraStatus(Bit#(32) dummy);
+         let v <- remote_access.auroraStatus();
+         indication.hexDump(v);
+      endmethod
+         
       method Action dumpStart();
          dut.dumpStart();
       endmethod

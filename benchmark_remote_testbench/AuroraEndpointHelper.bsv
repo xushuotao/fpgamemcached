@@ -45,6 +45,7 @@ interface RemoteAccessIfc#(numeric type numInstances);
    interface Vector#(numInstances, RemoteIfc) remotePorts;
    method Action setRoutingTable(Bit#(32) node, Bit#(32) portidx, Bit#(32) portsel);
    method Action setNetId(Bit#(32) netid);
+   method ActionValue#(Bit#(32)) auroraStatus;
    method Bit#(32) getNetId;
    interface Vector#(AuroraExtCount, Aurora_Pins#(1)) aurora_ext;
    interface Aurora_Clock_Pins aurora_quad119;
@@ -278,6 +279,21 @@ module mkRemoteAccess#(Clock clk250, Reset rst250)(RemoteAccessIfc#(numInstances
    
    method Action setNetId(Bit#(32) netid);
       myNetIdx <= truncate(netid);
+   endmethod
+   
+   method ActionValue#(Bit#(32)) auroraStatus;
+      return {
+              0,
+              auroraExt117.user[3].channel_up,
+              auroraExt117.user[2].channel_up,
+              auroraExt117.user[1].channel_up,
+              auroraExt117.user[0].channel_up,
+         
+              auroraExt119.user[3].channel_up,
+              auroraExt119.user[2].channel_up,
+              auroraExt119.user[1].channel_up,
+              auroraExt119.user[0].channel_up
+              };
    endmethod
    
    method Bit#(32) getNetId;
