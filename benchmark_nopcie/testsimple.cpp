@@ -15,7 +15,7 @@ class SimpleIndication : public SimpleIndicationWrapper
 {  
 public:
   virtual void finish(uint64_t v) {
-    fprintf(stderr, "FPGA finishes in %d cycles.\n", v);
+    fprintf(stderr, "FPGA finishes in %lld cycles.\n", v);
     sleep(1);
     exit(0);
   }

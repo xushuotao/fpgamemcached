@@ -3,6 +3,7 @@ package Valuestr;
 import FIFO::*;
 import FIFOF::*;
 import SpecialFIFOs::*;
+import BRAMFIFO::*;
 import Vector::*;
 import GetPut::*;
 import ClientServer::*;
@@ -12,25 +13,9 @@ import DRAMArbiter::*;
 
 import Time::*;
 
-typedef struct{
-   Time_t timestamp;
-   } ValHeader deriving (Bits, Eq);
+import Connectable::*;
 
-/* constants definitions */
-
-typedef SizeOf#(ValHeader) ValHeaderSz;
-
-typedef TDiv#(ValHeaderSz, 512) HeaderBurstSz;
-
-
-typedef enum {Idle, ProcHeader, Proc} ValAcc_State deriving (Bits, Eq);
-
-typedef struct {
-   Bit#(64) addr;
-   Bit#(64) nBytes;
-   } BurstReq deriving (Bits, Eq);
-
-
+import ValuestrTypes::*;
 
 /* interface defintions */
 
@@ -56,172 +41,294 @@ interface ValAccess_ifc;
 endinterface
 
 //(*synthesize*)
-module mkValRawAccess#(Clk_ifc real_time)(ValAccess_ifc);
+//module mkValRawAccess#(Clk_ifc real_time)(ValAccess_ifc);
+module mkValRawAccess(ValAccess_ifc);
    
-   Reg#(ValAcc_State) state <- mkReg(Idle);
+   Clk_ifc real_time <- mkLogicClock;
+   
+   Reg#(ValAcc_State) state <- mkReg(ProcHeader);
    Reg#(Bool) rnw <- mkRegU();
    
    //Reg#(Bool) readChannelOpen <- mkReg(False);
-   Reg#(Bit#(6)) initOffset <- mkRegU();
-   Reg#(Bit#(7)) initNbytes <- mkRegU();
-   Reg#(Bit#(64)) currAddr <- mkRegU();
-   Reg#(Bit#(64)) byteCnt <- mkRegU();
-   Reg#(Bit#(64)) numBytes <- mkRegU();
-   Reg#(Bit#(64)) numBursts <- mkRegU();
+   //Reg#(Bit#(6)) initOffset <- mkRegU();
+   //Reg#(Bit#(7)) initNbytes <- mkRegU();
+   //Reg#(Bit#(64)) currAddr <- mkRegU();
+   Reg#(Bit#(32)) byteCnt <- mkReg(0);
+   Reg#(Bit#(32)) byteCnt_Wr <- mkReg(0);
+   //Reg#(Bit#(64)) numBytes <- mkRegU();
+   //Reg#(Bit#(64)) numBursts <- mkRegU();
    
-   Reg#(Bit#(64)) byteCnt2 <- mkRegU();
+   Reg#(Bit#(32)) byteCnt_Rd <- mkReg(0);
+   Reg#(Bool) firstLine_Rd <- mkReg(True);
    
-   Reg#(Bool) firstLine <- mkRegU();
-   Reg#(Bool) firstLine2 <- mkRegU();
-   Reg#(Bit#(7)) lineCnt <- mkRegU();
-   Reg#(Bit#(512)) lineBuf <- mkRegU();
    
-   Reg#(Bit#(64)) wordBuf <- mkRegU();
-   Reg#(Bit#(4)) wordCnt <- mkRegU();
+   Reg#(Bool) firstLine <- mkReg(True);
+   Reg#(Bool) firstLine2 <- mkReg(True);
+   Reg#(Bit#(7)) lineCnt_Rd <- mkRegU();
+   Reg#(Bit#(512)) lineBuf_Rd <- mkRegU();
+   
+   Reg#(Bit#(64)) wordBuf_Rd <- mkRegU();
+   Reg#(Bit#(4)) wordCnt_Rd <- mkRegU();
+   
+   Reg#(Bit#(7)) lineCnt_Wr <- mkRegU();
+   Reg#(Bit#(512)) lineBuf_Wr <- mkRegU();
+   
+   Reg#(Bit#(64)) wordBuf_Wr <- mkRegU();
+   Reg#(Bit#(4)) wordCnt_Wr <- mkRegU();
+   
    
    FIFO#(Bit#(64)) readRespQ <- mkFIFO();
    
+   FIFO#(DRAMReqType_Imm) dramCmdQ_Imm <- mkFIFO();
    FIFO#(DRAMReq) dramCmdQ <- mkFIFO();
    FIFO#(Bit#(512)) dramDataQ <- mkFIFO();
    
+   FIFO#(CmdType) cmdQ <- mkFIFO();
+   FIFO#(CmdType) cmdQ_Rd <- mkFIFO();
+   FIFO#(CmdType) cmdQ_Wr <- mkFIFO();
+   
+   mkConnection(toGet(dramCmdQ_Imm), toPut(dramCmdQ));
+
+   Reg#(Bit#(64)) reqCnt <- mkReg(0);
+   
    rule updateHeader if (state == ProcHeader);
-      //$display("updateHeader: currAddr = %d, data = %h, nBytes = %d",currAddr, real_time.get_time, fromInteger(valueOf(TDiv#(SizeOf#(Time_t),8))));
-      //dram.write(currAddr, extend(pack(real_time.get_time)),fromInteger(valueOf(TDiv#(SizeOf#(Time_t),8))));
-      dramCmdQ.enq(DRAMReq{rnw:False, addr: currAddr, data:extend(pack(real_time.get_time)), numBytes:fromInteger(valueOf(TDiv#(SizeOf#(Time_t),8)))});
-      //$display("updateHeader: nextAddr <= %d", currAddr + fromInteger(valueOf(TDiv#(ValHeaderSz,8))));
-      currAddr <= currAddr + fromInteger(valueOf(TDiv#(ValHeaderSz,8)));
+      let cmd <- toGet(cmdQ).get();
+      //let cmd = cmdQ.first();
+      dramCmdQ_Imm.enq(DRAMReqType_Imm{rnw:False, addr: cmd.currAddr, data:extend(pack(real_time.get_time)), numBytes:fromInteger(valueOf(TDiv#(SizeOf#(Time_t),8))), shiftval: 0});
+     
+      cmd.currAddr = cmd.currAddr + fromInteger(valueOf(TDiv#(ValHeaderSz,8)));
+      if (cmd.rnw ) 
+         cmdQ_Rd.enq(cmd);
+      else
+         cmdQ_Wr.enq(cmd);
+      //currAddr <= cmd.currAddr + fromInteger(valueOf(TDiv#(ValHeaderSz,8)));
+     
       state <= Proc;
    endrule
+
+   FIFO#(RespHandleType) respHandleQ <- mkSizedFIFO(16);
    
-   rule driveReadCmd if (state == Proc && byteCnt < numBytes && rnw);
-      $display("Valstr issuing read cmd: currAddr = %d", currAddr);
-      //dram.readReq(currAddr, 64);
-      dramCmdQ.enq(DRAMReq{rnw:True, addr: currAddr, data:?, numBytes:64});
-      if (currAddr[5:0] == 0) begin
-         currAddr <= currAddr + 64;
-         byteCnt <= byteCnt + 64;
+   rule driveReadCmd if (state == Proc);// && cmdQ_2.first().rnw());
+      let cmd = cmdQ_Rd.first();
+      let addr = cmd.currAddr + extend(byteCnt);
+      $display("Valstr issuing read cmd: currAddr = %d", addr);
+      
+      
+      Bit#(32) byteIncr = ?;
+      dramCmdQ_Imm.enq(DRAMReqType_Imm{rnw:True, addr: addr, data:?, numBytes:64, shiftval: 0});
+      if (addr[5:0] == 0) begin
+         byteIncr = 64; 
       end
       else begin
-         currAddr <= (currAddr & ~(extend(6'b111111))) + 64;
-         byteCnt <= byteCnt + extend(initNbytes);
+         byteIncr = extend(cmd.initNbytes);//extend(cmd.initOffset)//extend(initNbytes);
+      end
+      
+      //$display("byteCnt = %d, byteIncr = %d, numBytes = %d", byteCnt, byteIncr, cmd.numBytes);
+      if (byteCnt + byteIncr < cmd.numBytes) begin
+         byteCnt <= byteCnt + byteIncr;
+      end
+      else begin
+         byteCnt <= 0;
+         state <= ProcHeader;
+         cmdQ_Rd.deq();
+         //cmdQ.deq;
+         respHandleQ.enq(RespHandleType{numBytes:cmd.numBytes, initNbytes: cmd.initNbytes});
       end
    endrule
    
-        
-   rule procReadResp if (state == Proc && rnw);
-      if (byteCnt2 < numBytes) begin
-         if (firstLine) begin
-            //let v <- dram.read();
-            let v <- toGet(dramDataQ).get();
-            lineBuf <= v;
-            firstLine <= False;
+   Reg#(Bit#(64)) numBytes <- mkReg(0);
+   rule procReadResp;// if (state == Proc && rnw);
+      let args = respHandleQ.first;
+      Bit#(32) byteIncr = 0;    
+      
+      if (firstLine_Rd) begin
+         //let v <- dram.read();
+         //$display("valstr get first read resp, args.initNbytes=%d, args.numBytes = %d",args.initNbytes, args.numBytes);
+         let v <- toGet(dramDataQ).get();
+         if ( args.initNbytes >= 8 ) begin
+            lineBuf_Rd <= v >> 64;
+            lineCnt_Rd <= args.initNbytes - 8;
+            wordCnt_Rd <= 8;
+            readRespQ.enq(truncate(v));
+            byteIncr = 8;
          end
-         else begin 
-          
-            if (lineCnt >= extend(wordCnt) ) begin
-               $display("enquening result: lineBuf = %h \nlineCnt = %d, wordCnt = %d, byteCnt2 = %d, numBytes = %d",lineBuf, lineCnt, wordCnt, byteCnt2, numBytes );
-               //readRespQ.enq((wordBuf << {wordCnt,3'b0}) | (truncate(lineBuf) & ((1 << {wordCnt,3'b0}) - 1)));
-               readRespQ.enq(truncate({lineBuf[63:0], wordBuf} >> {wordCnt, 3'b0}));
-               byteCnt2 <= byteCnt2 + 8; //+ extend(wordCnt);
-               
-               if ( lineCnt == extend(wordCnt) && (byteCnt2 + 8 < numBytes) ) begin
-                  //let v <- dram.read();
-                  let v <- toGet(dramDataQ).get();
-                  lineBuf <= v;
-                  lineCnt <= 64;
-               end
-               else begin
-                  lineBuf <= lineBuf >> {wordCnt, 3'b0};
-                  lineCnt <= lineCnt - extend(wordCnt);
-               end
-               wordCnt <= 8;
+         else begin
+            lineBuf_Rd <= v;
+            lineCnt_Rd <= args.initNbytes;//64 - args.initOffset;
+            wordCnt_Rd <= 8;
+            if ( extend(args.initNbytes) >= args.numBytes) begin
+               readRespQ.enq(truncate(v));
+               byteIncr = args.numBytes;
+            end
+         end
+            
+         if ( args.numBytes > byteIncr )
+            firstLine_Rd <= False;
+
+      end
+      else begin 
+         
+         $display("enquening result: lineBuf_Rd = %h\nwordBuf_Rd = %h\nlineCnt_Rd = %d, wordCnt_Rd = %d, byteCnt_Rd = %d, numBytes = %d",lineBuf_Rd, wordBuf_Rd, lineCnt_Rd, wordCnt_Rd, byteCnt_Rd, args.numBytes );
+         
+         byteIncr = 8;
+         
+         if ( lineCnt_Rd >= 16) begin
+            readRespQ.enq(truncate({lineBuf_Rd[63:0], wordBuf_Rd} >> {wordCnt_Rd, 3'b0}));
+            lineBuf_Rd <= lineBuf_Rd >> {wordCnt_Rd,3'b0};
+            lineCnt_Rd <= lineCnt_Rd - extend(wordCnt_Rd);
+            wordCnt_Rd <= 8;
+         end
+         else if ( lineCnt_Rd >= 8) begin
+            readRespQ.enq(truncate(lineBuf_Rd));
+            Vector#(8, Bit#(8)) rawData = unpack(truncate(lineBuf_Rd >> 64));
+            wordBuf_Rd <= pack(reverse(rotateBy(reverse(rawData), truncate(unpack(lineCnt_Rd)-8))));
+            if ( byteCnt_Rd + extend(lineCnt_Rd) < args.numBytes) begin
+               let v <- toGet(dramDataQ).get();
+               lineBuf_Rd <= v;
+               wordCnt_Rd <= truncate(16-lineCnt_Rd);
+               lineCnt_Rd <= 64;
             end
             else begin
-               $display("shift wordBuf = %h \nlineCnt = %d, wordCnt = %d", wordBuf, lineCnt, wordCnt);
-               wordBuf <= truncate({lineBuf[63:0],wordBuf} >> (lineCnt <<3));//(wordBuf << (lineCnt << 3)) | (truncate(lineBuf) & ((1 << (lineCnt << 3)) - 1));
-               wordCnt <= wordCnt - truncate(lineCnt);
-               lineCnt <= 64;
-               if ( byteCnt2 + extend(lineCnt) < numBytes) begin
-                  //let v <- dram.read();
-                  let v <- toGet(dramDataQ).get();
-                  lineBuf <= v;
-               end
+               wordCnt_Rd <= 8;
+               lineCnt_Rd <= 64;
+               lineBuf_Rd <= lineBuf_Rd >> 64;
             end
-         end       
+         end
+         else begin
+            if ( byteCnt_Rd + extend(lineCnt_Rd) < args.numBytes) begin
+               let v <- toGet(dramDataQ).get();
+               
+               Bit#(4) sft = truncate(8 - lineCnt_Rd);
+               lineBuf_Rd <= v >> {sft,3'b0};
+               lineCnt_Rd <= 56 + lineCnt_Rd;
+               Vector#(8, Bit#(8)) rawData = unpack(truncate(lineBuf_Rd));
+               Bit#(64) shiftData = pack(rotateBy(rawData, unpack(truncate(sft))));
+               readRespQ.enq(truncate({v[63:0],shiftData} >> {sft,3'b0}));
+               wordCnt_Rd <= 8;
+            end
+            else begin
+               readRespQ.enq(truncate(lineBuf_Rd));
+            end
+         end
+      end
+         
+      if (byteCnt_Rd + byteIncr <  args.numBytes) begin
+         byteCnt_Rd <= byteCnt_Rd + byteIncr;
       end
       else begin
-         state <= Idle;
+         //state <= Idle;
+         if ( !firstLine_Rd)
+            firstLine_Rd <= True;
+         //byteCnt <= 0;
+         byteCnt_Rd <= 0;
+         respHandleQ.deq;
       end
    endrule
          
-   FIFO#(Bit#(64)) wDataWord <- mkFIFO; 
-   rule driveWriteCmd if (state == Proc && !rnw);
+   Reg#(Bit#(32)) burstCnt <- mkReg(0);
+   //FIFO#(Bit#(64)) wDataWord <- mkFIFO;
+   //FIFO#(Bit#(64)) wDataWord <- mkSizedBRAMFIFO(131072);
+   FIFO#(Bit#(64)) wDataWord <- mkSizedBRAMFIFO(512);
+   //FIFO#(Bit#(64)) wDataWord <- mkSizedBRAMFIFO(65536);
+   rule driveWriteCmd if (state == Proc);// && !cmdQ_Wr.first().rnw);
+      let cmd = cmdQ_Wr.first();
+      
+      let currAddr = cmd.currAddr + extend(byteCnt_Wr);
+      
       if (firstLine) begin
-         wordBuf <= wDataWord.first;
-         wordCnt <= 8;
+         wordBuf_Wr <= wDataWord.first;
+         wordCnt_Wr <= 8;
          wDataWord.deq();
-         numBursts <= numBursts - 1;
+         //numBursts <= numBursts - 1;
+         burstCnt <= burstCnt + 1;
          firstLine <= False;
+         lineCnt_Wr <= cmd.initNbytes;//64 - cmd.initOffset; 
       end
       else begin
-         if (lineCnt > extend(wordCnt) ) begin
+         if (lineCnt_Wr > extend(wordCnt_Wr) ) begin
             
-            lineBuf <= truncate({wordBuf,lineBuf} >> {wordCnt, 3'b0});
-            lineCnt <= lineCnt - extend(wordCnt);
-            wordCnt <= 8;
+            lineBuf_Wr <= truncate({wordBuf_Wr,lineBuf_Wr} >> {wordCnt_Wr, 3'b0});
+            lineCnt_Wr <= lineCnt_Wr - extend(wordCnt_Wr);
+            wordCnt_Wr <= 8;
             
-            //$display("Valstr write: lineBuf = %h\nlineCnt = %d, numBytes = %d, wordCnt = %d", lineBuf, lineCnt, numBytes, wordCnt);
+            $display("Valstr write: lineBuf_Wr = %h\nlineCnt_Wr = %d,  wordCnt_Wr = %d, burstCnt = %d, cmd.numBurst = %d, numBytes = %d", lineBuf_Wr, lineCnt_Wr, wordCnt_Wr, burstCnt, cmd.numBursts, cmd.numBytes);
             
-            if ( numBursts > 0 ) begin
-               wordBuf <= wDataWord.first;
+            if ( burstCnt < cmd.numBursts/*numBursts > 0*/ ) begin
+               wordBuf_Wr <= wDataWord.first;
                wDataWord.deq;
                //$display("newData Got: %h, numBursts = %d",wDataWord.first, numBursts);
-               numBursts <= numBursts - 1;
+               //numBursts <= numBursts - 1;
+               burstCnt <= burstCnt + 1;
             end
             else begin
-               $display("ValStr write(Last): currAddr = %d, data = %h, nBytes = %d",currAddr, {wordBuf,lineBuf} >> {lineCnt,3'b0}, numBytes);
+               Bit#(7) nBytes = truncate(cmd.numBytes - byteCnt_Wr);
+               $display("ValStr write(Last): currAddr = %d, data = %h, nBytes = %d",currAddr, {wordBuf_Wr,lineBuf_Wr} >> {lineCnt_Wr,3'b0}, nBytes);
                Bit#(6) offset = truncate(currAddr);
-               //dram.write(currAddr, truncate({wordBuf,lineBuf} >> {lineCnt, 3'b0}) >> {offset,3'b0}, truncate(numBytes));
-               dramCmdQ.enq(DRAMReq{rnw:False, addr: currAddr, data:truncate({wordBuf,lineBuf} >> {lineCnt, 3'b0}) >> {offset,3'b0}, numBytes:truncate(numBytes)});
-               state <= Idle;
+               //dram.write(currAddr, truncate({wordBuf_Wr,lineBuf_Wr} >> {lineCnt_Wr, 3'b0}) >> {offset,3'b0}, truncate(numBytes));
+               //dramCmdQ_Imm.enq(DRAMReq{rnw:False, addr: currAddr, data:truncate({wordBuf_Wr,lineBuf_Wr} >> {lineCnt_Wr, 3'b0}) >> {offset,3'b0}, numBytes:nBytes});
+               dramCmdQ_Imm.enq(DRAMReqType_Imm{rnw:False, addr: currAddr, data:truncateLSB({wordBuf_Wr,lineBuf_Wr}), numBytes:nBytes, shiftval: truncate(lineCnt_Wr) + offset - 8});
+               //state <= Idle;
+               //cmdQ.deq;
+               cmdQ_Wr.deq();
+               firstLine <= True;
+               firstLine2 <= True; 
+               burstCnt <= 0;
+               byteCnt_Wr <= 0;
+               state <= ProcHeader;
             end
-            
-            
             
          end
          else begin
+            /*
             if ( currAddr[5:0] == 0) begin
-               currAddr <= currAddr + 64;
+               //currAddr <= currAddr + 64;
+               byteCnt_Wr = byteCnt_Wr + 64;
             end
             else begin
                currAddr <= (currAddr & ~(extend(6'b111111))) + 64;
             end
-            
+            */
             Bit#(7) nBytes = ?;
             Bit#(6) offset = truncate(currAddr);
             if (firstLine2) begin
-               nBytes = extend(initNbytes);
-               firstLine2 <= False;
+               nBytes = cmd.initNbytes;
+               if ( byteCnt_Wr + extend(nBytes) < cmd.numBytes)
+                  firstLine2 <= False;
             end
-            else if (numBytes < 64) begin
-               nBytes = truncate(numBytes);   
+            else if ( byteCnt_Wr + 64 > cmd.numBytes/*numBytes < 64*/) begin
+               nBytes = truncate(cmd.numBytes-byteCnt_Wr);   
             end
             else begin
                nBytes = 64;
             end
             
-            if ( numBytes <= extend(nBytes)) begin
-               state <= Idle;
+            
+            
+            if ( byteCnt_Wr + extend(nBytes) >= cmd.numBytes /*numBytes <= extend(nBytes)*/) begin
+               //state <= Idle;
+               byteCnt_Wr <= 0;
+               //cmdQ.deq;
+               cmdQ_Wr.deq();
+               firstLine <= True;
+               if (!firstLine2)
+                  firstLine2 <= True; 
+               burstCnt <= 0;
+               state <= ProcHeader;
+            end
+            else begin
+               byteCnt_Wr <= byteCnt_Wr + extend(nBytes);
             end
             
             //$display("Valstr write: initNbytes = %d", initNbytes);
-            numBytes <= numBytes - extend(nBytes);
-            $display("ValStr write(Normal): currAddr = %d, data = %h, nBytes = %d",currAddr, ({wordBuf,lineBuf} >> (lineCnt << 3)) >> {offset,3'b0}, nBytes);
-            //dram.write(currAddr, truncate({wordBuf,lineBuf} >> (lineCnt << 3)) >> {offset,3'b0}, nBytes);
-            dramCmdQ.enq(DRAMReq{rnw:False, addr: currAddr, data:truncate({wordBuf,lineBuf} >> (lineCnt << 3)) >> {offset,3'b0}, numBytes:nBytes});
-            wordBuf <= wordBuf >> (lineCnt << 3);
-            lineCnt <= 64;
-            wordCnt <= wordCnt - truncate(lineCnt);
+            //numBytes <= numBytes - extend(nBytes);
+            
+            $display("ValStr write(Normal): currAddr = %d, data = %h, nBytes = %d",currAddr, ({wordBuf_Wr,lineBuf_Wr} >> (lineCnt_Wr << 3)) >> {offset,3'b0}, nBytes);
+            //dram.write(currAddr, truncate({wordBuf_Wr,lineBuf_Wr} >> (lineCnt_Wr << 3)) >> {offset,3'b0}, nBytes);
+            //dramCmdQ_Imm.enq(DRAMReq{rnw:False, addr: currAddr, data:truncate({wordBuf_Wr,lineBuf_Wr} >> (lineCnt_Wr << 3)) >> {offset,3'b0}, numBytes:nBytes});
+            dramCmdQ_Imm.enq(DRAMReqType_Imm{rnw:False, addr: currAddr, data:truncateLSB({wordBuf_Wr,lineBuf_Wr}), numBytes:nBytes, shiftval: truncate(lineCnt_Wr)+offset-8});
+            wordBuf_Wr <= wordBuf_Wr >> (lineCnt_Wr << 3);
+            lineCnt_Wr <= 64;
+            wordCnt_Wr <= wordCnt_Wr - truncate(lineCnt_Wr);
          end
       end
    endrule
@@ -233,29 +340,12 @@ module mkValRawAccess#(Clk_ifc real_time)(ValAccess_ifc);
    Wire#(Bit#(64)) wrDta <- mkWire;
       
    
-   method Action readReq(Bit#(64) startAddr, Bit#(64) nBytes) if (state == Idle);
-      $display("Valuestr Get read req, startAddr = %d, nBytes = %d", startAddr, nBytes);
+   method Action readReq(Bit#(64) startAddr, Bit#(64) nBytes);// if (state == Idle);
+      $display("Valuestr Get read req, startAddr = %d, nBytes = %d, reqId = %d", startAddr, nBytes, reqCnt);
       Bit#(6) offset_local = truncate(startAddr + fromInteger(valueOf(TDiv#(ValHeaderSz,8))));
-      initNbytes <= 64 - extend(offset_local);
-      state <= ProcHeader;
-      
-      currAddr <= startAddr;
-      initOffset <= offset_local;
-      
-      lineCnt <= 64 - extend(offset_local);
-      
-      firstLine <= True;
-      byteCnt <= 0;
-      byteCnt2 <= 0;
-      
-      wordCnt <= 8;
-      numBytes <= nBytes;
-      if ( nBytes[2:0] == 0 )
-         numBursts <= zeroExtend(nBytes[63:3]);
-      else
-         numBursts <= zeroExtend(nBytes[63:3]) + 1;
-      
-      rnw <= True;
+      //initNbytes <= 64 - extend(offset_local);
+      cmdQ.enq(CmdType{currAddr: startAddr,initNbytes: 64 - extend(offset_local), numBytes:truncate(nBytes), rnw: True});
+      reqCnt <= reqCnt + 1;
    
       rdReq <= BurstReq{addr: startAddr, nBytes: nBytes};
    endmethod
@@ -267,29 +357,19 @@ module mkValRawAccess#(Clk_ifc real_time)(ValAccess_ifc);
       return d;
    endmethod
    
-   method Action writeReq(Bit#(64) startAddr, Bit#(64) nBytes) if (state == Idle);
-      $display("Valuestr Get write req, startAddr = %d, nBytes = %d", startAddr, nBytes);
+   method Action writeReq(Bit#(64) startAddr, Bit#(64) nBytes);// if (state == Idle);
+      $display("Valuestr Get write req, startAddr = %d, nBytes = %d, reqId = %d", startAddr, nBytes, reqCnt);
       Bit#(6) offset_local = truncate(startAddr + fromInteger(valueOf(TDiv#(ValHeaderSz,8))));
-      initNbytes <= 64 - extend(offset_local);//~offset_local + 1;
-      state <= ProcHeader;
       
-      currAddr <= startAddr;
-      initOffset <= offset_local;
-      
-      lineCnt <= 64 - extend(offset_local);//extend(initNbytes);//~truncate(startAddr) & 7'b0111111
-      
-      firstLine <= True;
-      firstLine2 <= True;
-      byteCnt <= 0;
-      byteCnt2 <= 0;
-      numBytes <= nBytes;
+      Bit#(32) numBursts = ?;
       if ( nBytes[2:0] == 0 )
-         numBursts <= zeroExtend(nBytes[63:3]);
+         numBursts = zeroExtend(nBytes[31:3]);
       else
-         numBursts <= zeroExtend(nBytes[63:3]) + 1;
-   
-      rnw <= False;
-   
+         numBursts = zeroExtend(nBytes[31:3]) + 1;
+
+      cmdQ.enq(CmdType{currAddr:startAddr, initNbytes: 64 - extend(offset_local), numBytes: truncate(nBytes), numBursts: numBursts, rnw: False});
+      //rnw <= False;
+      reqCnt <= reqCnt + 1;
       wrReq <= BurstReq{addr: startAddr, nBytes: nBytes};
    endmethod
    

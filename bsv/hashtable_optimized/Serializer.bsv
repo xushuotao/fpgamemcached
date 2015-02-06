@@ -14,7 +14,7 @@ interface DeserializerIfc;
 endinterface
 
 interface SerializerIfc;
-   method Action start(Bit#(64) nOutputs);
+   method Action start(Bit#(64) nOutputs, Bit#(16) reqId);
    interface Put#(Bit#(128)) inPipe;
    interface Get#(Bit#(64)) outPipe;
 endinterface
@@ -67,21 +67,21 @@ module mkSerializer(SerializerIfc);
    FIFO#(Bit#(128)) bufFifo <- mkBypassFIFO();
    FIFO#(Bit#(64)) packetFifo <- mkFIFO;
    Reg#(Bit#(1)) sel <- mkReg(0);
-   FIFO#(Bit#(64)) cntMaxQ <- mkFIFO;
+   FIFO#(Tuple2#(Bit#(64),Bit#(16))) cntMaxQ <- mkSizedFIFO(16);
    Reg#(Bit#(64)) cnt <- mkReg(0);
    
    rule doSerial;
       Vector#(2,Bit#(64)) packets = unpack(bufFifo.first());
-      //$display("Putting packets[%d] = %h to outPipe", sel, packets[sel]);
+      //$display("Putting packets[%d] = %h to outPipe, reqCnt = %d", sel, packets[sel], tpl_2(cntMaxQ.first));
       packetFifo.enq(packets[sel]);
      
-      let cntMax = cntMaxQ.first();
+      let cntMax = tpl_1(cntMaxQ.first());
       if ( cnt + 1 >= cntMax ) begin
          cnt <= 0;
          cntMaxQ.deq();
          bufFifo.deq();
          sel <= 0;
-         //$display("Serializer last token, packets[sel] = %d", packets[sel]);
+         //$display("Serializer last token, packets[%d] = %h, reqCnt = %d", sel, packets[sel], tpl_2(cntMaxQ.first));
       end
       else begin
          if ( sel == 1 ) begin
@@ -92,8 +92,8 @@ module mkSerializer(SerializerIfc);
       end
    endrule   
    
-   method Action start(Bit#(64) nOutputs);
-      cntMaxQ.enq(nOutputs);
+   method Action start(Bit#(64) nOutputs, Bit#(16) reqId);
+      cntMaxQ.enq(tuple2(nOutputs,reqId));
    endmethod
       
    interface Put inPipe = toPut(bufFifo);

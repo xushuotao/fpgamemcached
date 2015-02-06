@@ -190,32 +190,34 @@ endmodule
 
 
 module mkWriteTrafficGen(MemwriteEngineV#(dataWidth, cmdQDepth, numServers));
-   Vector#(numServers, FIFO#(MemengineCmd)) reqQs <- replicateM(mkFIFO);
+   Vector#(numServers, FIFO#(MemengineCmd)) reqQs <- replicateM(mkSizedFIFO(32));
    Vector#(numServers, FIFOF#(Bit#(dataWidth))) dataQs <- replicateM(mkFIFOF);
    Vector#(numServers, FIFO#(Bool)) doneQs <- replicateM(mkFIFO);
    
    for (Integer i = 0; i < valueOf(numServers); i = i + 1) begin 
       FIFO#(Bit#(33)) lenQ <- mkFIFO();
-      Reg#(Bit#(33)) cnt <- mkRegU();
+      Reg#(Bit#(33)) cnt <- mkReg(8);
       
-      (* descending_urgency = "process_output, process_cmd" *)
+      //(* descending_urgency = "process_output, process_cmd" *)
       
-      rule process_cmd;
+      /*rule process_cmd;
          let cmd <- toGet(reqQs[i]).get();
          lenQ.enq(extend(cmd.len));
          cnt <= 0;
-      endrule
+      endrule*/
       
       rule process_output;
-         let length = lenQ.first();
-         if ( cnt >= length ) begin
-            lenQ.deq();
-            $display("Here");
+         //let length = lenQ.first();
+         Bit#(33) length = extend(reqQs[i].first().len);
+         
+         let v <- toGet(dataQs[i]).get();
+         $display("MemReadEng got data = %d", v);         
+         if ( cnt + 8 >= length ) begin
+            reqQs[i].deq();
             doneQs[i].enq(True);
+            cnt <= 0;
          end
          else begin
-            let v <- toGet(dataQs[i]).get();
-            $display("MemReadEng got data = %d", v);
             cnt <= cnt + 8;
          end
       endrule

@@ -83,7 +83,7 @@ module mkSerializer(SerializerIfc);
                Bit#(64) temp = truncate(buff);
                //outputFifo.enq(truncate({});
                outputFifo.enq(truncate({word,temp}));
-               $display("%h",word);
+               //$display("%h",word);
                buff <= zeroExtend(word>>32);
             end
             else begin
@@ -140,7 +140,7 @@ module mkDataAlign(DataAlignIfc);
          end
          
          if (maxByte > 0) begin
-            $display("data aligner enqueing last word = %d", keyToken);
+            //$display("data aligner enqueing last word = %d", keyToken);
             serializer.request.put(PacketType{cont:False, packet: keyToken});
          end
       end
@@ -218,7 +218,7 @@ module mkMixStage#(Integer stage_id)(MixStageIfc);
       if ( args.stageId == fromInteger(myStage)) begin
          if (args.doKey) begin
             if ( !args.toFinal ) begin
-               $display("\x1b[32mHardware:: Mix_phase, k[0] = %h, k[1] = %h, k[2] = %h\x1b[0m", args.k0, args.k1, args.k2);
+               //$display("\x1b[32mHardware:: Mix_phase, k[0] = %h, k[1] = %h, k[2] = %h\x1b[0m", args.k0, args.k1, args.k2);
                let a = reg_a + args.k0;
                let b = reg_b + args.k1;
                let c = reg_c + args.k2;
@@ -240,7 +240,7 @@ module mkMixStage#(Integer stage_id)(MixStageIfc);
                args.a = a;
                args.b = b;
                args.c = c;
-               $display("\x1b[32mHardware:: Final_mix, a = %h, b = %h, c = %h\x1b[0m", a, b, c);      
+               //$display("\x1b[32mHardware:: Final_mix, a = %h, b = %h, c = %h\x1b[0m", a, b, c);      
                args.doKey = False;
             end
          end
@@ -267,7 +267,7 @@ module mkMixStage#(Integer stage_id)(MixStageIfc);
             b = b-a;  b = b^rot(a,19);  a = a+c;
             c = c-b;  c = c^rot(b, 4);  b = b+a;
       
-            $display("\x1b[32mHardware:: Mix_phase, a = %h, b = %h, c = %h\x1b[0m", a, b, c);
+            //$display("\x1b[32mHardware:: Mix_phase, a = %h, b = %h, c = %h\x1b[0m", a, b, c);
             
             args.a = a;
             args.b = b;
@@ -338,7 +338,8 @@ module mkMixEng(MixEngIfc);
       mkConnection(mixStages[i].response, mixStages[i+1].request);
    end
    
-   FIFO#(Bit#(32)) lenQ <- mkFIFO;
+   Reg#(Bit#(16)) reqCnt <- mkReg(0);
+   FIFO#(Tuple2#(Bit#(32), Bit#(16))) lenQ <- mkFIFO;
    Reg#(Bit#(32)) lenCnt <- mkReg(0);
    Reg#(Bit#(32)) stageCnt <- mkReg(0);
    
@@ -346,9 +347,10 @@ module mkMixEng(MixEngIfc);
    FIFO#(Tuple4#(Bit#(32), Bit#(32), Bit#(32), Bool)) outputFifo <- mkBypassFIFO();
    
    rule sendToPipe;
-      let lenMax = lenQ.first();
+      let lenMax = tpl_1(lenQ.first());
       let keys <- toGet(keyFifo).get();
       Vector#(3, Bit#(32)) k = unpack(keys);
+      $display("\x1b[32mJenkins[reqId = %d]:: Mix_phase, key0 = %h, key1 = %h, key2 = %h\x1b[0m", tpl_2(lenQ.first()), k[0] , k[1], k[2]);
       if ( lenCnt + 12 > lenMax) begin
          mixStages[0].request.put(MixStageType{k0:k[0], k1:k[1], k2:k[2], stageId: stageCnt, doKey: True, lastToken: True, toFinal: True});
          lenCnt <= 0;
@@ -367,25 +369,29 @@ module mkMixEng(MixEngIfc);
          stageCnt <= stageCnt + 1;
       end
    endrule
-   
+
+   Reg#(Bit#(16)) reqCnt_2 <- mkReg(0);
    rule receiveFromPipe;
       let args <- mixStages[21].response.get;
+      
       if (args.lastToken) begin
-         $display("Enqueing Results, stageId = %d, c = %h", args.stageId, args.c);
+         reqCnt_2 <= reqCnt_2 + 1;
+         $display("\x1b[32mJenkins[reqId = %d] mixEngs get result, stageId = %d, a = %h, b = %h, c = %h, toFinal = %b\x1b[0m", reqCnt_2, args.stageId, args.a, args.b, args.c, args.toFinal);
          outputFifo.enq(tuple4(args.a, args.b, args.c, !args.toFinal));
       end
    endrule
    
    interface Put startQ;
       method Action put(Bit#(32) length);
-         $display("\x1b[32mHardware:: Initalize_phase, a = %h, b = %h, c = %h\x1b[0m", 32'hdeadbeef + length , 32'hdeadbeef + length, 32'hdeadbeef + length);
+         reqCnt <= reqCnt + 1;
+         $display("\x1b[32mJenkins[reqId = %d]:: Initalize_phase, a = %h, b = %h, c = %h\x1b[0m", reqCnt, 32'hdeadbeef + length , 32'hdeadbeef + length, 32'hdeadbeef + length);
          /*keylen <= length;
          reg_a <= 32'hdeadbeef + length;
          reg_b <= 32'hdeadbeef + length;
          reg_c <= 32'hdeadbeef + length;*/
          
          let init_val = 32'hdeadbeef + length;
-         lenQ.enq(length);
+         lenQ.enq(tuple2(length,reqCnt));
          mixStages[0].request.put(MixStageType{a: init_val, b: init_val, c: init_val, stageId: 0,  doKey: False, lastToken: False});
       endmethod
    endinterface
@@ -405,9 +411,11 @@ module mkFinalMixEng(FinalMixEngIfc);
    //FIFO#(Tuple4#(Bit#(32), Bit#(32), Bit#(32), Bool)) finalFifo <- mkFIFO;
    
 //   Wire#(Bool) poke <- mkWire;
-   FIFO#(Bit#(32)) outputFifo <- mkLFIFO;
+   //FIFO#(Bit#(32)) outputFifo <- mkLFIFO;
+   FIFO#(Bit#(32)) outputFifo <- mkFIFO;
    
-   FIFO#(Tuple5#(Bit#(32), Bit#(32), Bit#(32), Bool, Bit#(32))) finalFifo <- mkLFIFO;
+   //FIFO#(Tuple5#(Bit#(32), Bit#(32), Bit#(32), Bool, Bit#(32))) finalFifo <- mkLFIFO;
+   FIFO#(Tuple5#(Bit#(32), Bit#(32), Bit#(32), Bool, Bit#(32))) finalFifo <- mkFIFO;
    
    /*rule final_phase_0;
       if (!wire_skip) begin
@@ -432,7 +440,7 @@ module mkFinalMixEng(FinalMixEngIfc);
       end
    endrule*/
    
-   rule final_phase_0;
+/*   rule final_phase_0;
       
       let a = wire_a;
       let b = wire_b;
@@ -445,7 +453,7 @@ module mkFinalMixEng(FinalMixEngIfc);
       a = a^c; a = a-rot(c,4); 
       b = b^a; b = b-rot(a,14);
       c = c^b; c = c-rot(b,24);
-      $display("\x1b[32mHardware:: Final_phase, a = %h, b = %h, c = %h\x1b[0m", a, b, c);*/
+      $display("\x1b[32mHardware:: Final_phase, a = %h, b = %h, c = %h\x1b[0m", a, b, c);
       //hashFifo.enq(c);
       //end
       //else
@@ -455,8 +463,9 @@ module mkFinalMixEng(FinalMixEngIfc);
       
       finalFifo.enq(tuple5(a, b, c, wire_skip, wire_c));
       
-   endrule 
+   endrule */
    
+   Reg#(Bit#(16)) reqCnt <- mkReg(0);
    rule final_phase_1;
       let d = finalFifo.first;
       finalFifo.deq;
@@ -467,6 +476,9 @@ module mkFinalMixEng(FinalMixEngIfc);
       let flag = tpl_4(d);
       let old_c = tpl_5(d);
       
+      reqCnt <= reqCnt + 1;
+      $display("\x1b[32mJenkins[reqId = %d]:: Final_phase, a = %h, b = %h, c = %h, old_c = %h, flag = %b\x1b[0m", reqCnt, a, b, c, old_c, flag);
+
       if (!flag) begin
          c = c^b; c = c-rot(b,16);
          a = a^c; a = a-rot(c,4); 
@@ -494,10 +506,20 @@ module mkFinalMixEng(FinalMixEngIfc);
    
    interface Put request;
       method Action put(Tuple4#(Bit#(32), Bit#(32), Bit#(32), Bool) v);
-      wire_a <= tpl_1(v);
-      wire_b <= tpl_2(v);
-      wire_c <= tpl_3(v);
-      wire_skip <= tpl_4(v);
+/*         wire_a <= tpl_1(v);
+         wire_b <= tpl_2(v);
+         wire_c <= tpl_3(v);
+         wire_skip <= tpl_4(v);*/
+         let a = tpl_1(v);
+         let b = tpl_2(v);
+         let c = tpl_3(v);
+         let skip = tpl_4(v);
+         //$display("\x1b[32mHardware:: Final_phase, a = %h, b = %h, c = %h\x1b[0m", a, b, c);
+         c = c^b; c = c-rot(b,14);
+         a = a^c; a = a-rot(c,11);
+         b = b^a; b = b-rot(a,25);
+      
+         finalFifo.enq(tuple5(a, b, c, skip, tpl_3(v)));
 //      poke <= True;
       endmethod
    endinterface
@@ -507,7 +529,7 @@ endmodule
 //(*synthesize*)
 module mkJenkinsHash (JenkinsHashIfc);
    
-   FIFO#(Bit#(32)) hashFifo <- mkFIFO;
+   //FIFO#(Bit#(32)) hashFifo <- mkFIFO;
    
    let dataAlign <- mkDataAlign;
    let mixEng <- mkMixEng;
@@ -517,6 +539,7 @@ module mkJenkinsHash (JenkinsHashIfc);
    mkConnection(dataAlign.response, mixEng.request);
    mkConnection(mixEng.response, final_mixEng.request);
 
+   Reg#(Bit#(16)) respCnt <- mkReg(0);
    method Action start(Bit#(32) length);
       dataAlign.start(length);
       //mixEng.start(length);
@@ -525,9 +548,12 @@ module mkJenkinsHash (JenkinsHashIfc);
    method Action putKey(Bit#(64) key);
       dataAlign.request.put(key);
    endmethod
+
    
    method ActionValue#(Bit#(32)) getHash();
+      respCnt <= respCnt + 1;
       let v <- final_mixEng.response.get();
+      $display("Jenkins got hash, reqId = %d, hash = %h", respCnt, v);
       return v;
    endmethod
       

@@ -34,42 +34,35 @@ import XilinxCells ::*;
 
 typedef enum {SimpleIndication, SimpleRequest} IfcNames deriving (Eq,Bits);
 
-`ifdef BSIM
-typedef StdPortalTop#(PhysAddrWidth) PortalTopIfc;
-`else
-typedef PortalTop#(PhysAddrWidth, 64, DDR3_Pins_VC707, 0) PortalTopIfc;
+
+interface Top_Pins;
+   //interface Aurora_Pins#(4) aurora_fmc1;
+   //interface Aurora_Clock_Pins aurora_clk_fmc1;
+   /*      
+   interface Vector#(AuroraExtCount, Aurora_Pins#(1)) aurora_ext;
+   interface Aurora_Clock_Pins aurora_quad119;
+   interface Aurora_Clock_Pins aurora_quad117;*/
+`ifndef BSIM
+   interface DDR3_Pins_VC707 pins_ddr3;
 `endif
+endinterface
 
 
-module mkPortalTop#(HostType host)(PortalTopIfc);
-   
+module mkPortalTop#(HostType host)(PortalTop#(PhysAddrWidth, 64, Top_Pins, 0));
    `ifdef BSIM
    let ddr3_ctrl_user <- mkDDR3Simulator;
-   `else
-   Clock sys_clk = host.tsys_clk_200mhz;
-   Reset pci_sys_reset_n <- mkAsyncResetFromCR(1, sys_clk); 
+   `else 
+   Clock clk200 = host.tsys_clk_200mhz_buf;
+   Clock ddr_buf = clk200;
+   Reset ddr3ref_rst_n <- mkAsyncResetFromCR(4, ddr_buf );
+	/////////////////////////////////////////////////////
    
-   ClockGenerator7Params clk_params = defaultValue();
-   clk_params.clkin1_period     = 5.000;       // 200 MHz reference
-   clk_params.clkin_buffer      = False;       // necessary buffer is instanced above
-   clk_params.reset_stages      = 0;           // no sync on reset so input clock has pll as only load
-   clk_params.clkfbout_mult_f   = 5.000;       // 1000 MHz VCO
-   clk_params.clkout0_divide_f  = 10;          // unused clock 
-   //clk_params.clkout0_divide_f  = 8;//10;          // unused clock 
-   clk_params.clkout1_divide    = 5;           // ddr3 reference clock (200 MHz)
-
-   ClockGenerator7 clk_gen <- mkClockGenerator7(clk_params, clocked_by sys_clk, reset_by pci_sys_reset_n);
-   Clock ddr_clk = clk_gen.clkout0;
-   Reset rst_n <- mkAsyncReset( 1, pci_sys_reset_n, ddr_clk );
-   Reset ddr3ref_rst_n <- mkAsyncReset( 1, rst_n, clk_gen.clkout1 );
-   //Reset ddr3ref_rst_n <- mkAsyncReset( 1, pci_sys_reset_n, clk_gen.clkout1 );
-
    DDR3_Configure ddr3_cfg = defaultValue;
    ddr3_cfg.reads_in_flight = 2;   // adjust as needed
    //ddr3_cfg.reads_in_flight = 24;   // adjust as needed
    //ddr3_cfg.fast_train_sim_only = False; // adjust if simulating
    //Clock ddr_buf <- mkClockBUFG(clocked_by clk_gen.clkout1);
-   Clock ddr_buf = clk_gen.clkout1;
+   //Clock ddr_buf = clk_gen.clkout1;
    DDR3_Controller_VC707 ddr3_ctrl <- mkDDR3Controller_VC707(ddr3_cfg, ddr_buf, clocked_by ddr_buf, reset_by ddr3ref_rst_n);
    
    Clock ddr3clk = ddr3_ctrl.user.clock;
@@ -79,8 +72,9 @@ module mkPortalTop#(HostType host)(PortalTopIfc);
    DRAMControllerIfc dramController <- mkDRAMController();
    
    `ifdef BSIM
-   let ddr_cli_200Mhz <- mkDDR3ClientSync(dramController.ddr3_cli, clockOf(dramController), resetOf(dramController), clockOf(ddr3_ctrl_user), resetOf(ddr3_ctrl_user));
-   mkConnection(ddr_cli_200Mhz, ddr3_ctrl_user);
+   //let ddr_cli_200Mhz <- mkDDR3ClientSync(dramController.ddr3_cli, clockOf(dramController), resetOf(dramController), clockOf(ddr3_ctrl_user), resetOf(ddr3_ctrl_user));
+   //mkConnection(ddr_cli_200Mhz, ddr3_ctrl_user);
+   mkConnection(dramController.ddr3_cli, ddr3_ctrl_user);
    `else
    let ddr_cli_200Mhz <- mkDDR3ClientSync(dramController.ddr3_cli, clockOf(dramController), resetOf(dramController), ddr3clk, ddr3rstn);
    mkConnection(ddr_cli_200Mhz, ddr3_ctrl.user);
@@ -106,10 +100,16 @@ module mkPortalTop#(HostType host)(PortalTopIfc);
    interface masters = nil;
    interface leds = default_leds;
    
+    interface Top_Pins pins;    
+   /*
+      interface Aurora_Pins aurora_ext = hwmain.aurora_ext;
+      interface Aurora_Clock_Pins aurora_quad119 = hwmain.aurora_quad119;
+      interface Aurora_Clock_Pins aurora_quad117 = hwmain.aurora_quad117;*/
    `ifndef BSIM
-   interface pins = ddr3_ctrl.ddr3;
+      interface DDR3_Pins_VC707 pins_ddr3 = ddr3_ctrl.ddr3;
    `endif
-
+   endinterface
+  
 
 endmodule : mkPortalTop
 

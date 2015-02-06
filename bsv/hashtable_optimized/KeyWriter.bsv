@@ -19,10 +19,10 @@ endinterface
 module mkKeyWriter#(DRAMWriteIfc dramEP)(KeyWriterIfc);
    //DepacketIfc#(64, LineWidth, HeaderRemainderSz) depacketEng_key <- mkDepacketEngine();
    DeserializerIfc depacketEng_key <- mkDeserializer();
-   FIFO#(Bit#(64)) keyBuf <- mkFIFO;
+   FIFO#(Bit#(64)) keyBuf <- mkBypassFIFO;
    
-   Reg#(StateKeyWriter) state <- mkReg(Idle);
-   FIFO#(StateKeyWriter) nextStateQ <- mkFIFO();
+   //Reg#(StateKeyWriter) state <- mkReg(Idle);
+   //FIFO#(StateKeyWriter) nextStateQ <- mkFIFO();
       
    rule writeKeys_1;
       $display("put keytokens in to depacket inpipe");
@@ -32,15 +32,16 @@ module mkKeyWriter#(DRAMWriteIfc dramEP)(KeyWriterIfc);
  
    Reg#(Bit#(8)) keyCnt <- mkReg(0);
    FIFO#(PhyAddr) addrQ <- mkFIFO();
-   FIFO#(Bit#(8)) keyMaxQ <- mkFIFO();
+   //FIFO#(Bit#(8)) keyMaxQ <- mkFIFO();
+   FIFO#(Tuple3#(Bit#(8),StateKeyWriter, Bit#(16))) keyMaxQ <- mkFIFO();
    
-   rule doSplit (state == Idle);
+   /*rule doSplit (state == Idle);
       let v <- toGet(nextStateQ).get();
       state <= v;
-   endrule
+   endrule*/
    
-   rule doWrite (state == DoWrite);
-      let keyMax = keyMaxQ.first();
+   rule doWrite (tpl_2(keyMaxQ.first()) == DoWrite);//(state == DoWrite);
+      let keyMax = tpl_1(keyMaxQ.first());
       let baseAddr = addrQ.first();
       let wrAddr = baseAddr + extend({keyCnt, 6'b0});
       if ( keyCnt + 1 < keyMax) begin
@@ -50,7 +51,7 @@ module mkKeyWriter#(DRAMWriteIfc dramEP)(KeyWriterIfc);
          keyMaxQ.deq;
          addrQ.deq;
          keyCnt <= 0;
-         state <= Idle;
+         //state <= Idle;
       end
       
       let v <- depacketEng_key.outPipe.get();
@@ -62,7 +63,7 @@ module mkKeyWriter#(DRAMWriteIfc dramEP)(KeyWriterIfc);
                                       numBytes:fromInteger(valueOf(HeaderResidualBytes))});
          end
       else begin*/
-      $display("wrAddr = %d, wrVal = %h, bytes = %d", wrAddr, v, fromInteger(valueOf(LineBytes)));
+      $display("KeyWriter write keys, reqCnt = %d, wrAddr = %d, wrVal = %h, bytes = %d", tpl_3(keyMaxQ.first()), wrAddr, v, fromInteger(valueOf(LineBytes)));
       dramEP.request.put(HtDRAMReq{rnw: False,
                                    addr:wrAddr, 
                                    data:zeroExtend(v),
@@ -70,15 +71,15 @@ module mkKeyWriter#(DRAMWriteIfc dramEP)(KeyWriterIfc);
       //end
    endrule
 
-   rule doBypass (state == ByPass);
-      let keyMax = keyMaxQ.first();
+   rule doBypass (tpl_2(keyMaxQ.first()) == ByPass);//(state == ByPass);
+      let keyMax = tpl_1(keyMaxQ.first());
       if ( keyCnt + 1 < keyMax) begin
          keyCnt <= keyCnt + 1;
       end
       else begin
          keyMaxQ.deq;
          keyCnt <= 0;
-         state <= Idle;
+         //state <= Idle;
       end
       let v <- depacketEng_key.outPipe.get();
       $display("KeyWriter Bypassing Keys, value = %h", v);
@@ -98,19 +99,33 @@ module mkKeyWriter#(DRAMWriteIfc dramEP)(KeyWriterIfc);
          numKeytokens = (args.keyLen >> 3) + 1;
       end
    
-      depacketEng_key.start(numKeytokens);
-   
-      if (args.cmpMask != 0) begin
-         nextStateQ.enq(ByPass);
+      depacketEng_key.start(extend(numKeytokens));
+      
+      StateKeyWriter nextState = ?;
+      
+      if (args.byPass) begin
+         //nextStateQ.enq(ByPass);
+         //state <= ByPass;
+         nextState = ByPass;
          dramEP.start(args.hv, args.idx, 0);
       end
       else begin
-         addrQ.enq(args.keyAddr);
-         dramEP.start(args.hv, args.idx, extend(args.keyNreq));
-         nextStateQ.enq(DoWrite);
+         if (args.cmpMask != 0) begin
+            //nextStateQ.enq(ByPass);
+            //state <= ByPass;
+            nextState = ByPass;
+            dramEP.start(args.hv, args.idx, 0);
+         end
+         else begin
+            addrQ.enq(args.keyAddr);
+            dramEP.start(args.hv, args.idx, extend(args.keyNreq));
+            //state <= DoWrite;
+            nextState = DoWrite;
+            //nextStateQ.enq(DoWrite);
+         end
       end
 
-      keyMaxQ.enq(args.keyNreq);
+      keyMaxQ.enq(tuple3(args.keyNreq, nextState, reqCnt));
    endmethod
   
    interface Put inPipe = toPut(keyBuf);

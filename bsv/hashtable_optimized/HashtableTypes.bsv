@@ -67,6 +67,7 @@ typedef struct{
    Bit#(8) keyLen;
    Bit#(64) nBytes;
    Time_t time_now;
+   Bool rnw;
    } HdrRdParas deriving(Bits, Eq);
 
 
@@ -83,6 +84,7 @@ typedef struct{
    Bit#(NumWays) cmpMask;
    Bit#(NumWays) idleMask;
    Vector#(NumWays, ItemHeader) oldHeaders;
+   Bool rnw;
    } KeyRdParas deriving(Bits, Eq);
 
 typedef struct{
@@ -98,6 +100,7 @@ typedef struct{
    Bit#(NumWays) cmpMask;
    Bit#(NumWays) idleMask;
    Vector#(NumWays, ItemHeader) oldHeaders;
+   Bool rnw;
    } HdrWrParas deriving(Bits, Eq);
 
 typedef struct{
@@ -112,4 +115,5 @@ typedef struct{
    Time_t time_now;
    Bit#(NumWays) cmpMask;
    Bit#(NumWays) idleMask;
+   Bool byPass;
    } KeyWrParas deriving(Bits, Eq);

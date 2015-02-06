@@ -28,9 +28,9 @@ interface HashtableInitIfc;
 endinterface
 
 interface HashtableIfc;
-   method Action readTable(Bit#(8) keylen, Bit#(32) hv, Bit#(64) nBytes);
+   method Action readTable(Bit#(8) keylen, Bit#(32) hv, Bit#(64) nBytes, Bool rnw);
    method Action keyTokens(Bit#(64) keys);
-   method ActionValue#(Tuple2#(Bit#(64), Bit#(64))) getValAddr();
+   method ActionValue#(Tuple3#(Bit#(64), Bit#(64), Bool)) getValAddr();
    interface HashtableInitIfc init;
    interface DRAMClient dramClient;
    
@@ -104,7 +104,7 @@ module mkAssocHashtb#(Clk_ifc real_clk, ValAlloc_ifc valAlloc)(HashtableIfc);
    Reg#(Bit#(32)) hvMax <- mkRegU();
          
       
-   method Action readTable(Bit#(8) keylen, Bit#(32) hv, Bit#(64) nBytes) if (initialized);
+   method Action readTable(Bit#(8) keylen, Bit#(32) hv, Bit#(64) nBytes, Bool rnw) if (initialized);
       $display("Hashtable Request Received");
    
       PhyAddr baseAddr = (unpack(zeroExtend(hvMax & hv)) * fromInteger(valueOf(ItemOffset))) << 6;// & addrTop;
@@ -133,7 +133,7 @@ module mkAssocHashtb#(Clk_ifc real_clk, ValAlloc_ifc valAlloc)(HashtableIfc);
          rdAddr_key = baseAddr + extend((reqCnt_hdr-1) << 6);
       end
   
-      hdrReader.start(HdrRdParas{hv:hv, hdrAddr: baseAddr, hdrNreq: reqCnt_hdr, keyAddr: rdAddr_key, keyNreq: reqCnt_key, keyLen: keylen, nBytes: nBytes, time_now: real_clk.get_time});
+      hdrReader.start(HdrRdParas{hv:hv & hvMax, hdrAddr: baseAddr, hdrNreq: reqCnt_hdr, keyAddr: rdAddr_key, keyNreq: reqCnt_key, keyLen: keylen, nBytes: nBytes, time_now: real_clk.get_time, rnw: rnw});
             
    endmethod
    
@@ -144,7 +144,7 @@ module mkAssocHashtb#(Clk_ifc real_clk, ValAlloc_ifc valAlloc)(HashtableIfc);
       keyTks.enq(keys);
    endmethod
    
-   method ActionValue#(Tuple2#(Bit#(64), Bit#(64))) getValAddr();
+   method ActionValue#(Tuple3#(Bit#(64), Bit#(64), Bool)) getValAddr();
       //valAddrFifo.deq;
       let v <- hdrWriter.getValAddr();
       return v;
@@ -155,13 +155,13 @@ module mkAssocHashtb#(Clk_ifc real_clk, ValAlloc_ifc valAlloc)(HashtableIfc);
          //hvMax <= unpack((1 << lgOffset) - 1) / fromInteger(valueOf(ItemOffset));
          hvMax <= (1 << lgOffset) - 1;
          PhyAddr maxAddr = ((1 << lgOffset) * fromInteger(valueOf(ItemOffset))) << 6;
-         `ifndef MEOW
+         //`ifndef BSIM
          addrTop <= maxAddr;
          addrMaxQ.enq(maxAddr);
          initialized <= False;
-         `else
-         initialized <= True;
-         `endif
+         //`else
+         //initialized <= True;
+         //`endif
       endmethod
    
       method Bool initialized;

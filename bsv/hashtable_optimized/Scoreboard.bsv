@@ -23,13 +23,22 @@ module mkScoreboard(ScoreboardIfc#(numEntries));
    Wire#(Maybe#(Bit#(TLog#(numEntries)))) grant_id <- mkWire;
    
    rule doHdrRequest;
+      let requesthv = requestWire;
       Bool conflicts = False;
       for (Integer i = 0; i < valueOf(numEntries); i = i + 1) begin
-         if (valids[i] && requestWire == hashValues[i] && pendingHdrWr[i])
+         if (valids[i] && requesthv == hashValues[i] && pendingHdrWr[i])
             conflicts = True;
       end 
-           
-      if (conflicts && !valids[nextPtr])
+/*      
+      $display("doHdrRequest hv = %h",requesthv);
+      $display("doHdrRequest valids = ");$display(fshow(readVReg(valids)));
+      $display("hashValues = ");$display(fshow(readVReg(hashValues)));
+      $display("pendingHdrWr = ");$display(fshow(readVReg(pendingHdrWr)));
+      $display("pendingKeyWr = ");$display(fshow(readVReg(pendingKeyWr)));
+      $display("oldestPtr = %d, nextPtr = %d", oldestPtr, nextPtr);
+      
+      $display("doHdrRequest conflicts = %b, valids[nextPtr] = %b", conflicts, valids[nextPtr]);*/
+      if (conflicts || valids[nextPtr])
          grant_id <= tagged Invalid;
       else begin
          grant_id <= tagged Valid nextPtr;
@@ -64,6 +73,14 @@ module mkScoreboard(ScoreboardIfc#(numEntries));
    endmethod
    
    method Action insert(Bit#(32) hv, Bit#(TLog#(numEntries)) idx);
+   /*
+      $display("doInsert hv = %h, idx = %d", hv, idx);
+      $display("doInsert valids = ");$display(fshow(readVReg(valids)));
+      $display("hashValues = ");$display(fshow(readVReg(hashValues)));
+      $display("pendingHdrWr = ");$display(fshow(readVReg(pendingHdrWr)));
+      $display("pendingKeyWr = ");$display(fshow(readVReg(pendingKeyWr)));
+      $display("oldestPtr = %d, nextPtr = %d", oldestPtr, nextPtr);
+     */ 
       valids[idx] <= True;
       hashValues[idx] <= hv;
       pendingHdrWr[idx] <= True;
@@ -87,7 +104,8 @@ module mkScoreboard(ScoreboardIfc#(numEntries));
    method Action doneKeyWrite(Bit#(TLog#(numEntries)) idx);
       valids[idx] <= False;
       oldestPtr <= oldestPtr + 1;
-      $display("doneKeyWrite valids = ");$display(fshow(readVReg(valids)));
+      $display("doneKeyWrite idx = %d", idx);
+      $display("valids = ");$display(fshow(readVReg(valids)));
       $display("hashValues = ");$display(fshow(readVReg(hashValues)));
       $display("pendingHdrWr = ");$display(fshow(readVReg(pendingHdrWr)));
       $display("pendingKeyWr = ");$display(fshow(readVReg(pendingKeyWr)));

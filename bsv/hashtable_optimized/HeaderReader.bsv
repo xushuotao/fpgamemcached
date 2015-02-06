@@ -14,10 +14,11 @@ interface HeaderReaderIfc;
    method Action start(HdrRdParas hdrRdParas);
    method ActionValue#(KeyRdParas) finish();
 endinterface
-
+ 
 module mkHeaderReader#(DRAMReadIfc dramEP)(HeaderReaderIfc);
+   //FIFO#(KeyRdParas) immediateQ <- mkSizedFIFO(8);
    FIFO#(KeyRdParas) immediateQ <- mkSizedFIFO(16);
-   FIFO#(KeyRdParas) finishQ <- mkBypassFIFO;
+   FIFO#(KeyRdParas) finishQ <- mkFIFO;
    
    /*rule shit;
       let d <- dramEP.response.get();
@@ -40,6 +41,9 @@ module mkHeaderReader#(DRAMReadIfc dramEP)(HeaderReaderIfc);
             idleMask_temp[i] = 1;
       end
       
+      /*cmpMask_temp = 4'b0001;
+      idleMask_temp = 4'b1110;*/
+      
       let idx <- dramEP.getReqId();
       args.idx = idx;
       args.cmpMask = cmpMask_temp;
@@ -50,11 +54,11 @@ module mkHeaderReader#(DRAMReadIfc dramEP)(HeaderReaderIfc);
       
    endrule
    
-   Reg#(Bit#(64)) cnt <- mkReg(0);
+   Reg#(Bit#(16)) reqCnt <- mkReg(0);
       
    method Action start(HdrRdParas args);// if (!busy);
-      $display("Header Reader Starts for hv = %h, ReqCnt = %d", args.hv, cnt);
-      cnt <= cnt + 1;
+      $display("Header Reader Starts for hv = %h, ReqCnt = %d", args.hv, reqCnt);
+      reqCnt <= reqCnt + 1;
   
       dramEP.start(args.hv, ?, extend(args.hdrNreq));
       dramEP.request.put(HtDRAMReq{rnw: True, addr: args.hdrAddr, numBytes:64});
@@ -70,7 +74,8 @@ module mkHeaderReader#(DRAMReadIfc dramEP)(HeaderReaderIfc);
                                 time_now: args.time_now,
                                 cmpMask: ?,
                                 idleMask: ?,
-                                oldHeaders: ?});
+                                oldHeaders: ?,
+                                rnw: args.rnw});
    endmethod
    
    method ActionValue#(KeyRdParas) finish();
