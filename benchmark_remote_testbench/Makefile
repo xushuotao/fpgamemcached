@@ -18,7 +18,7 @@ NUMBER_OF_MASTERS = 0
 CONNECTALDIR=~/tools/xbsv/
 
 CONNECTALFLAGS = --verilog /afs/csail.mit.edu/group/csg/tools_lx86/bluespec/current/lib/board_support/bluenoc/xilinx/VC707/verilog/ddr3_v2_0/ddr3_v2_0/user_design/rtl \
-		--constraint $(CONNECTALDIR)/xilinx/constraints/vc707_ddr3_sx.xdc \
+		--constraint ~/fpgamemcached/xilinx/constraints/vc707_ddr3_sx.xdc \
 		--clib rt \
 		--xci ~/fpgamemcached/chipscope/ila_dma/ila_dma.xci \
 		-D IMPORT_HOSTIF \
