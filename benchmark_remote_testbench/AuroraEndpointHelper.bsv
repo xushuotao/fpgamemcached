@@ -47,9 +47,9 @@ interface RemoteAccessIfc#(numeric type numInstances);
    method Action setNetId(Bit#(32) netid);
    method ActionValue#(Bit#(32)) auroraStatus;
    method Bit#(32) getNetId;
-   interface Vector#(AuroraExtCount, Aurora_Pins#(1)) aurora_ext;
+   interface Vector#(AuroraExtQuad, Aurora_Pins#(1)) aurora_ext;
    interface Aurora_Clock_Pins aurora_quad119;
-   interface Aurora_Clock_Pins aurora_quad117;
+   //interface Aurora_Clock_Pins aurora_quad117;
 endinterface
 
 module mkRemoteAccess#(Clock clk250, Reset rst250)(RemoteAccessIfc#(numInstances));
@@ -64,9 +64,9 @@ module mkRemoteAccess#(Clock clk250, Reset rst250)(RemoteAccessIfc#(numInstances
    
 
    GtxClockImportIfc gtx_clk_119 <- mkGtxClockImport;
-   GtxClockImportIfc gtx_clk_117 <- mkGtxClockImport;
+   //GtxClockImportIfc gtx_clk_117 <- mkGtxClockImport;
    AuroraExtIfc auroraExt119 <- mkAuroraExt(gtx_clk_119.gtx_clk_p_ifc, gtx_clk_119.gtx_clk_n_ifc, clk50);
-   AuroraExtIfc auroraExt117 <- mkAuroraExt117(gtx_clk_117.gtx_clk_p_ifc, gtx_clk_117.gtx_clk_n_ifc, clk50);
+   //AuroraExtIfc auroraExt117 <- mkAuroraExt117(gtx_clk_117.gtx_clk_p_ifc, gtx_clk_117.gtx_clk_n_ifc, clk50);
    
    Vector#(numInstances, AuroraEndpointIfc#(MemReqType)) cmdEnds_request;
    Vector#(numInstances, AuroraEndpointIfc#(Tuple2#(Bit#(105), Bool))) dtaEnds_request;
@@ -87,8 +87,9 @@ module mkRemoteAccess#(Clock clk250, Reset rst250)(RemoteAccessIfc#(numInstances
       alist[numIns*i+3] = dtaEnds_response[i].cmd;
    end
    
-   AuroraExtArbiterIfc auroraExtArbiter <- mkAuroraExtArbiter(append(auroraExt119.user, auroraExt117.user),
-                                                              alist, myNetIdx);
+   //AuroraExtArbiterIfc auroraExtArbiter <- mkAuroraExtArbiter(append(auroraExt119.user, auroraExt117.user),
+                                                              //alist, myNetIdx);
+   AuroraExtArbiterIfc auroraExtArbiter <- mkAuroraExtArbiter(auroraExt119.user,alist, myNetIdx);
    
       
    Vector#(numInstances,StreamingSerializerIfc#(Bit#(128), Bit#(105))) ser_request <- replicateM(mkStreamingSerializer);
@@ -221,7 +222,7 @@ module mkRemoteAccess#(Clock clk250, Reset rst250)(RemoteAccessIfc#(numInstances
                            else begin
                               numTokens = (len >> 3) + 1;
                            end
-                           ser_128_64_request[i].start(numTokens);
+                           ser_128_64_request[i].start(numTokens, ?);
                            return tuple2(req, extend(node));
                         endmethod      
                         interface Get outPipe = ser_128_64_request[i].outPipe;
@@ -262,7 +263,7 @@ module mkRemoteAccess#(Clock clk250, Reset rst250)(RemoteAccessIfc#(numInstances
                               else begin
                                  numTokens = (len >> 3) + 1;
                               end
-                              ser_128_64_response[i].start(numTokens);
+                              ser_128_64_response[i].start(numTokens, ?);
                            end
                            return tuple2(req, extend(node));
                         endmethod      
@@ -284,10 +285,10 @@ module mkRemoteAccess#(Clock clk250, Reset rst250)(RemoteAccessIfc#(numInstances
    method ActionValue#(Bit#(32)) auroraStatus;
       return {
               0,
-              auroraExt117.user[3].channel_up,
+/*              auroraExt117.user[3].channel_up,
               auroraExt117.user[2].channel_up,
               auroraExt117.user[1].channel_up,
-              auroraExt117.user[0].channel_up,
+              auroraExt117.user[0].channel_up,*/
          
               auroraExt119.user[3].channel_up,
               auroraExt119.user[2].channel_up,
@@ -300,8 +301,9 @@ module mkRemoteAccess#(Clock clk250, Reset rst250)(RemoteAccessIfc#(numInstances
       return extend(myNetIdx);
    endmethod
       
-   interface Aurora_Pins aurora_ext = append(auroraExt119.aurora, auroraExt117.aurora);
+   //interface Aurora_Pins aurora_ext = append(auroraExt119.aurora, auroraExt117.aurora);
+   interface Aurora_Pins aurora_ext = auroraExt119.aurora;
    interface Aurora_Clock_Pins aurora_quad119 = gtx_clk_119.aurora_clk;
-   interface Aurora_Clock_Pins aurora_quad117 = gtx_clk_117.aurora_clk;
+   //interface Aurora_Clock_Pins aurora_quad117 = gtx_clk_117.aurora_clk;
 endmodule
    

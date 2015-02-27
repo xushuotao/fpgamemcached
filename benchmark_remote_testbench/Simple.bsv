@@ -39,8 +39,8 @@ import XilinxCells ::*;
 
 import AuroraCommon::*;
 
-
 import AuroraEndpointHelper::*;
+
 
 typedef struct{
    Bit#(8) opcode;
@@ -48,18 +48,22 @@ typedef struct{
    Bit#(21) vallen;
    Bit#(32) hv;
    } MemReqType_dummy deriving (Bits,Eq);
- 
+
 
 interface SimpleIndication;
    method Action finish(Bit#(64) v);
    method Action dumpReqs(MemReqType_dummy v);
    method Action dumpDta(Bit#(64) v);
-   method Action hexDump(Bit#(32) v);
+   method Action hexDump(Bit#(32) hex);
 endinterface
 
 interface SimpleRequest;
+   
    method Action start(Bit#(32) numTests);
+   
+   
    method Action dumpStart();
+  
    method Action setNetId(Bit#(32) netid);
    method Action setAuroraExtRoutingTable(Bit#(32) node, Bit#(32) portidx, Bit#(32) portsel);
    method Action auroraStatus(Bit#(32) dummy);
@@ -68,11 +72,10 @@ endinterface
 interface SimpleIfc;
    interface SimpleRequest request;
    
-   interface Vector#(AuroraExtCount, Aurora_Pins#(1)) aurora_ext;
+   interface Vector#(AuroraExtQuad, Aurora_Pins#(1)) aurora_ext;
    interface Aurora_Clock_Pins aurora_quad119;
-   interface Aurora_Clock_Pins aurora_quad117;
+   //interface Aurora_Clock_Pins aurora_quad117;
 endinterface 
-
 
 module mkSimpleRequest#(SimpleIndication indication, DRAMControllerIfc dram, Clock clk250, Reset rst250)(SimpleIfc);
    
@@ -106,12 +109,7 @@ module mkSimpleRequest#(SimpleIndication indication, DRAMControllerIfc dram, Clo
          remote_access.setNetId(netid);
          dut.setNetId(netid);
       endmethod
-
-      method Action auroraStatus(Bit#(32) dummy);
-         let v <- remote_access.auroraStatus();
-         indication.hexDump(v);
-      endmethod
-         
+   
       method Action dumpStart();
          dut.dumpStart();
       endmethod
@@ -120,10 +118,16 @@ module mkSimpleRequest#(SimpleIndication indication, DRAMControllerIfc dram, Clo
 	 remote_access.setRoutingTable(truncate(node), truncate(portidx), truncate(portsel));
       endmethod
    
+      method Action auroraStatus(Bit#(32) dummy);
+         let v <- remote_access.auroraStatus();
+	 indication.hexDump(v);
+      endmethod
+  
    endinterface
    interface Aurora_Pins aurora_ext = remote_access.aurora_ext;
    interface Aurora_Clock_Pins aurora_quad119 = remote_access.aurora_quad119;
-   interface Aurora_Clock_Pins aurora_quad117 = remote_access.aurora_quad117;
+   //interface Aurora_Clock_Pins aurora_quad117 = remote_access.aurora_quad117;
    
-   
+
 endmodule
+

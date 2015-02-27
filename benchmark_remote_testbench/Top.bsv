@@ -44,9 +44,9 @@ interface Top_Pins;
    //interface Aurora_Pins#(4) aurora_fmc1;
    //interface Aurora_Clock_Pins aurora_clk_fmc1;
          
-   interface Vector#(AuroraExtCount, Aurora_Pins#(1)) aurora_ext;
+   interface Vector#(AuroraExtQuad, Aurora_Pins#(1)) aurora_ext;
    interface Aurora_Clock_Pins aurora_quad119;
-   interface Aurora_Clock_Pins aurora_quad117;
+   //interface Aurora_Clock_Pins aurora_quad117;
 `ifndef BSIM
    interface DDR3_Pins_VC707 pins_ddr3;
 `endif
@@ -109,7 +109,7 @@ module mkPortalTop#(HostType host)(PortalTop#(PhysAddrWidth, 64, Top_Pins, 0));
    interface Top_Pins pins;    
       interface Aurora_Pins aurora_ext = hwmain.aurora_ext;
       interface Aurora_Clock_Pins aurora_quad119 = hwmain.aurora_quad119;
-      interface Aurora_Clock_Pins aurora_quad117 = hwmain.aurora_quad117;
+      //interface Aurora_Clock_Pins aurora_quad117 = hwmain.aurora_quad117;
    `ifndef BSIM
       interface DDR3_Pins_VC707 pins_ddr3 = ddr3_ctrl.ddr3;
    `endif
