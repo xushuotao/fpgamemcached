@@ -92,8 +92,8 @@
 ######################################## Quad 119
 ################ 24
 	# User Clock Contraint: the value is selected based on the line rate of the module
-	create_clock -name TS_user_clk_i_24 -period 6.400	 [get_pins portalTop_hwmain_remote_access_auroraExt119/auroraExtImport/aurora_64b66b_block_i/clock_module_i/user_clk_net_i/O]
-	create_clock -name TS_sync_clk_i_24 -period 3.200	 [get_pins portalTop_hwmain_remote_access_auroraExt119/auroraExtImport/aurora_64b66b_block_i/clock_module_i/sync_clock_net_i/O]
+        #create_clock -name TS_user_clk_i_24 -period 6.400	 [get_pins portalTop_hwmain_remote_access_auroraExt119/auroraExtImport/aurora_64b66b_block_i/clock_module_i/user_clk_net_i/O]
+	#create_clock -name TS_sync_clk_i_24 -period 3.200	 [get_pins portalTop_hwmain_remote_access_auroraExt119/auroraExtImport/aurora_64b66b_block_i/clock_module_i/sync_clock_net_i/O]
 
 	# create_clock -name TS_user_clk_i_24 -period 6.400	 [get_pins portalTop_hwmain_remote_access_auroraExt119/auroraExtImport/aurora_64b66b_block_i/gen_code_clock_module[0].clock_module_i/user_clk_net_i/O]
 
@@ -158,8 +158,8 @@
 ######################################## Quad 117
 ################ 16
 	# User Clock Contraint: the value is selected based on the line rate of the module
-	create_clock -name TS_user_clk_i_16 -period 6.400	 [get_pins portalTop_hwmain_remote_access_auroraExt117/auroraExtImport/aurora_64b66b_block_i/clock_module_i/user_clk_net_i/O]
-	create_clock -name TS_sync_clk_i_16 -period 3.200	 [get_pins portalTop_hwmain_remote_access_auroraExt117/auroraExtImport/aurora_64b66b_block_i/clock_module_i/sync_clock_net_i/O]
+	#create_clock -name TS_user_clk_i_16 -period 6.400	 [get_pins portalTop_hwmain_remote_access_auroraExt117/auroraExtImport/aurora_64b66b_block_i/clock_module_i/user_clk_net_i/O]
+	#create_clock -name TS_sync_clk_i_16 -period 3.200	 [get_pins portalTop_hwmain_remote_access_auroraExt117/auroraExtImport/aurora_64b66b_block_i/clock_module_i/sync_clock_net_i/O]
 
 	# create_clock -name TS_user_clk_i_16 -period 6.400	 [get_pins portalTop_hwmain_remote_access_auroraExt117/auroraExtImport/aurora_64b66b_block_i/gen_code_clock_module[0].clock_module_i/user_clk_net_i/O]
 
@@ -218,3 +218,11 @@
  set_property LOC K3 [get_ports { aurora_ext_7_TXN }]
  set_property LOC J6 [get_ports { aurora_ext_7_rxp_i }]
  set_property LOC J5 [get_ports { aurora_ext_7_rxn_i }]
+
+
+set_clock_groups -asynchronous -group {TS_init_clk_i} -group {TS_user_clk_i_all}
+#set_clock_groups -asynchronous -group {TS_init_clk_i} -group {TS_user_clk_i_16}
+#set_clock_groups -asynchronous -group {TS_init_clk_i} -group {app_clk}
+set_clock_groups -asynchronous -group {aurora_init_clk_i} -group {TS_user_clk_i_all}
+#set_clock_groups -asynchronous -group {aurora_init_clk_i} -group {TS_user_clk_i_24}
+#set_clock_groups -asynchronous -group {aurora_init_clk_i} -group {app_clk}
