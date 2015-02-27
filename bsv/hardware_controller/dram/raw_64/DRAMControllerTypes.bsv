@@ -38,13 +38,13 @@ typedef struct {
     // Data to write.
     // For read requests this is ignored.
     // Only those bytes with corresponding bit set in writeen will be written.
-   //DDR3Data datain;
-   Bit#(512) datain;
-} DDR3Request deriving(Bits, Eq);
+   DDR3Data datain;
+                //Bit#(512) datain;
+} DDRRequest deriving(Bits, Eq);
 
 // DDR2 Response.
 // Data read from requested address.
 // There will only be a response if writeen was 0 in the request.
-typedef Bit#(512) DDR3Response;
+typedef Bit#(512) DDRResponse;
 
-typedef Client#(DDR3Request, DDR3Response) DDR3Client;
+typedef Client#(DDRRequest, DDRResponse) DDR3Client;
