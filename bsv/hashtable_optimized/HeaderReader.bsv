@@ -9,6 +9,8 @@ import HtArbiterTypes::*;
 import HtArbiter::*;
 import HashtableTypes::*;
 
+import ParameterTypes::*;
+
 
 interface HeaderReaderIfc;
    method Action start(HdrRdParas hdrRdParas);
@@ -17,7 +19,7 @@ endinterface
  
 module mkHeaderReader#(DRAMReadIfc dramEP)(HeaderReaderIfc);
    //FIFO#(KeyRdParas) immediateQ <- mkSizedFIFO(8);
-   FIFO#(KeyRdParas) immediateQ <- mkSizedFIFO(16);
+   FIFO#(KeyRdParas) immediateQ <- mkSizedFIFO(numStages);
    FIFO#(KeyRdParas) finishQ <- mkFIFO;
    
    /*rule shit;
@@ -40,8 +42,8 @@ module mkHeaderReader#(DRAMReadIfc dramEP)(HeaderReaderIfc);
          if (v.keylen == 0)
             idleMask_temp[i] = 1;
       end
-      
-      /*cmpMask_temp = 4'b0001;
+      /*
+      cmpMask_temp = 4'b0001;
       idleMask_temp = 4'b1110;*/
       
       let idx <- dramEP.getReqId();

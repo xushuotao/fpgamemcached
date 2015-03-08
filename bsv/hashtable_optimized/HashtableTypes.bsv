@@ -58,6 +58,14 @@ typedef TSub#(64, DtaShiftSz) KeyShiftSz;
 */
 
 typedef struct{
+   Bit#(64) addr;
+   Bit#(64) nBytes;
+   Bool hit;
+   Bit#(30) hv;
+   Bit#(2) idx;
+   } HtRespType deriving (Bits, Eq);
+
+typedef struct{
    Bit#(32) hv;
    Bit#(8) idx;
    PhyAddr hdrAddr;

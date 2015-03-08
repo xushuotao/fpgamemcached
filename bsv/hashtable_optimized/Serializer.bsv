@@ -6,6 +6,7 @@ import SpecialFIFOs::*;
 
 import GetPut::*;
 
+import ParameterTypes::*;
 
 interface DeserializerIfc;
    method Action start(Bit#(64) nInputs);
@@ -67,7 +68,7 @@ module mkSerializer(SerializerIfc);
    FIFO#(Bit#(128)) bufFifo <- mkBypassFIFO();
    FIFO#(Bit#(64)) packetFifo <- mkFIFO;
    Reg#(Bit#(1)) sel <- mkReg(0);
-   FIFO#(Tuple2#(Bit#(64),Bit#(16))) cntMaxQ <- mkSizedFIFO(16);
+   FIFO#(Tuple2#(Bit#(64),Bit#(16))) cntMaxQ <- mkSizedFIFO(numStages);
    Reg#(Bit#(64)) cnt <- mkReg(0);
    
    rule doSerial;

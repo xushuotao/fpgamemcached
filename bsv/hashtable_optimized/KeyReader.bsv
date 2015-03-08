@@ -12,6 +12,8 @@ import HashtableTypes::*;
 
 import BRAMFIFO::*;
 
+import ParameterTypes::*;
+
 typedef enum {Idle, DoRead, ByPass} StateKeyReader deriving (Eq, Bits);
 
 interface KeyReaderIfc;
@@ -35,15 +37,17 @@ module mkKeyReader#(DRAMReadIfc dramEP)(KeyReaderIfc);
    //FIFO#(Bit#(64)) keyTks <- mkSizedFIFO(32*8);
    //FIFO#(Bit#(64)) keyTks <- mkSizedFIFO(256);
    //FIFO#(Bit#(64)) keyTks <- mkSizedBRAMFIFO(256);
-   FIFO#(Bit#(64)) keyTks <- mkSizedBRAMFIFO(512);
+   //FIFO#(Bit#(64)) keyTks <- mkSizedBRAMFIFO(512);
+   FIFO#(Bit#(64)) keyTks <- mkFIFO();
       
    //FIFO#(HdrWrParas) immediateQ <- mkSizedFIFO(8);
-   FIFO#(HdrWrParas) immediateQ <- mkSizedFIFO(16);
+   FIFO#(HdrWrParas) immediateQ <- mkSizedFIFO(numStages);
    FIFO#(HdrWrParas) finishQ <- mkFIFO;
    
    Reg#(StateKeyReader) state <- mkReg(Idle);
    
-   FIFO#(Bit#(64)) keyBuf <- mkSizedFIFO(32);
+   //FIFO#(Bit#(64)) keyBuf <- mkSizedFIFO(32);
+   FIFO#(Bit#(64)) keyBuf <- mkSizedBRAMFIFO(numStages*32);
    //FIFO#(Bit#(64)) keyBuf <- mkFIFO();
 
    Reg#(Bit#(16)) reqCnt <- mkReg(0);
@@ -91,7 +95,7 @@ module mkKeyReader#(DRAMReadIfc dramEP)(KeyReaderIfc);
    //FIFO#(Tuple2#(Bit#(8), StateKeyReader)) keyMaxQ <- mkSizedFIFO(8);
    
    
-   FIFO#(Tuple3#(Bit#(8), StateKeyReader, Bit#(16))) keyMaxQ <- mkSizedFIFO(16);
+   FIFO#(Tuple3#(Bit#(8), StateKeyReader, Bit#(16))) keyMaxQ <- mkSizedFIFO(numStages);
    Reg#(Bit#(8)) keyCnt <- mkReg(0);
    rule doRead (tpl_2(keyMaxQ.first()) == DoRead); //(state == DoRead);
       Bit#(NumWays) cmpMask = immediateQ.first.cmpMask;
@@ -104,8 +108,8 @@ module mkKeyReader#(DRAMReadIfc dramEP)(KeyReaderIfc);
       for (Integer i = 0; i < valueOf(NumWays); i=i+1) begin
          let key <- packetEngs_key[i].outPipe.get();
          if ( cmpMask[i] == 1 && key != keyToken ) begin
-            $display("keyReader Comparing keys, reqId = %d, keytoken = %h, keyinMemory[%d] = %h",tpl_3(keyMaxQ.first), keyToken, i, key);
-            cmpMask_temp[i] = 0;
+           $display("keyReader Comparing keys, reqId = %d, keytoken = %h, keyinMemory[%d] = %h",tpl_3(keyMaxQ.first), keyToken, i, key);
+           cmpMask_temp[i] = 0;
          end
       end
       
@@ -116,7 +120,11 @@ module mkKeyReader#(DRAMReadIfc dramEP)(KeyReaderIfc);
          $display("keyReader enqueing results, reqId = %d,  cmpMask = %b", tpl_3(keyMaxQ.first), cmpMask_temp);
          keyMaxQ.deq();
          let v <- toGet(immediateQ).get();
-         v.cmpMask = cmpMask_temp;       
+         v.cmpMask = cmpMask_temp;
+         
+/*         v.oldHeaders[0].valAddr = 1<<25;
+         v.oldHeaders[0].nBytes = 64;*/
+         
          finishQ.enq(v);
          keyCnt <= 0;
          //state <= Idle;

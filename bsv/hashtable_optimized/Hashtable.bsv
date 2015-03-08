@@ -30,7 +30,7 @@ endinterface
 interface HashtableIfc;
    method Action readTable(Bit#(8) keylen, Bit#(32) hv, Bit#(64) nBytes, Bool rnw);
    method Action keyTokens(Bit#(64) keys);
-   method ActionValue#(Tuple3#(Bit#(64), Bit#(64), Bool)) getValAddr();
+   method ActionValue#(HtRespType) getValAddr();
    interface HashtableInitIfc init;
    interface DRAMClient dramClient;
    
@@ -104,8 +104,12 @@ module mkAssocHashtb#(Clk_ifc real_clk, ValAlloc_ifc valAlloc)(HashtableIfc);
    Reg#(Bit#(32)) hvMax <- mkRegU();
          
       
+   Reg#(Bit#(32)) hvCnt <- mkReg(0);
    method Action readTable(Bit#(8) keylen, Bit#(32) hv, Bit#(64) nBytes, Bool rnw) if (initialized);
       $display("Hashtable Request Received");
+      //let hv = hvCnt;
+      hvCnt <= hvCnt + 1;
+      //hv = 0;
    
       PhyAddr baseAddr = (unpack(zeroExtend(hvMax & hv)) * fromInteger(valueOf(ItemOffset))) << 6;// & addrTop;
       Bit#(16) totalBits = (zeroExtend(keylen) << 3) + fromInteger(valueOf(HeaderSz));
@@ -133,6 +137,7 @@ module mkAssocHashtb#(Clk_ifc real_clk, ValAlloc_ifc valAlloc)(HashtableIfc);
          rdAddr_key = baseAddr + extend((reqCnt_hdr-1) << 6);
       end
   
+      //hv = 0;
       hdrReader.start(HdrRdParas{hv:hv & hvMax, hdrAddr: baseAddr, hdrNreq: reqCnt_hdr, keyAddr: rdAddr_key, keyNreq: reqCnt_key, keyLen: keylen, nBytes: nBytes, time_now: real_clk.get_time, rnw: rnw});
             
    endmethod
@@ -144,7 +149,7 @@ module mkAssocHashtb#(Clk_ifc real_clk, ValAlloc_ifc valAlloc)(HashtableIfc);
       keyTks.enq(keys);
    endmethod
    
-   method ActionValue#(Tuple3#(Bit#(64), Bit#(64), Bool)) getValAddr();
+   method ActionValue#(HtRespType) getValAddr();
       //valAddrFifo.deq;
       let v <- hdrWriter.getValAddr();
       return v;
@@ -159,8 +164,8 @@ module mkAssocHashtb#(Clk_ifc real_clk, ValAlloc_ifc valAlloc)(HashtableIfc);
          addrTop <= maxAddr;
          addrMaxQ.enq(maxAddr);
          initialized <= False;
-         //`else
-         //initialized <= True;
+        // `else
+        // initialized <= True;
          //`endif
       endmethod
    

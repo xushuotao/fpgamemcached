@@ -10,6 +10,8 @@ import HtArbiter::*;
 import Time::*;
 import Valuestr::*;
 
+import ParameterTypes::*;
+
 function Bit#(TLog#(NumWays)) mask2ind (Bit#(NumWays) mask);
    Bit#(TLog#(NumWays)) retval = ?;
   
@@ -43,16 +45,19 @@ endfunction
 interface HeaderWriterIfc;
    method Action start(HdrWrParas hdrRdParas);
    method ActionValue#(KeyWrParas) finish();
-   method ActionValue#(Tuple3#(Bit#(64), Bit#(64), Bool)) getValAddr();
+   method ActionValue#(HtRespType) getValAddr();
 endinterface
 
 module mkHeaderWriter#(ValAlloc_ifc valAlloc, DRAMWriteIfc dramEP)(HeaderWriterIfc);
    //FIFO#(Tuple3#(Bit#(64), Bit#(64), Bool)) valAddrFifo <- mkSizedFIFO(8);
-   FIFO#(Tuple3#(Bit#(64), Bit#(64), Bool)) valAddrFifo <- mkSizedFIFO(16);
+   //FIFO#(Tuple3#(Bit#(64), Bit#(64), Bool)) valAddrFifo <- mkSizedFIFO(numStages);
+   FIFO#(HtRespType) valAddrFifo <- mkSizedFIFO(numStages);
    FIFO#(ItemHeader) newHeaderQ <- mkFIFO;
    
    
-   FIFO#(Tuple3#(Bit#(64), Bit#(64), Bool)) pre_valAddrFifo <- mkFIFO();
+   //FIFO#(Tuple3#(Bit#(64), Bit#(64), Bool)) pre_valAddrFifo <- mkFIFO();
+   FIFO#(HtRespType) pre_valAddrFifo <- mkFIFO();
+   
    FIFO#(ItemHeader) pre_hdr <- mkFIFO();
    FIFO#(Bool) new_val <- mkFIFO();
    FIFO#(KeyWrParas) immediateQ <- mkFIFO;
@@ -82,12 +87,16 @@ module mkHeaderWriter#(ValAlloc_ifc valAlloc, DRAMWriteIfc dramEP)(HeaderWriterI
                                    nBytes : truncate(args.nBytes) //
                                    });
          $display("valAddFifo.enq, addr = %d, nBytes = %d, hit = %b", newValAddr, args.nBytes, True);
-         valAddrFifo.enq(tuple3(newValAddr, args.nBytes, True));
+         //valAddrFifo.enq(tuple3(newValAddr, args.nBytes, True));
+         retval.addr = newValAddr;
+         retval.nBytes = args.nBytes;
+         retval.hit = True;
       end
       else begin
-         valAddrFifo.enq(retval);
+         //valAddrFifo.enq(retval);
          newHeaderQ.enq(newhdr);
       end
+      valAddrFifo.enq(retval);
    endrule
    
    rule writeHeader;
@@ -114,7 +123,7 @@ module mkHeaderWriter#(ValAlloc_ifc valAlloc, DRAMWriteIfc dramEP)(HeaderWriterI
  
       Bool doWrite = True;
    
-      Tuple3#(Bit#(64), Bit#(64), Bool) retval = ?;
+      HtRespType retval = ?;
       ItemHeader newhdr = ?;
       Bool newVal = False;
    
@@ -127,13 +136,18 @@ module mkHeaderWriter#(ValAlloc_ifc valAlloc, DRAMWriteIfc dramEP)(HeaderWriterI
          //old_header[ind].refcount = old_header[ind].refcount + 1;
          old_header[ind].currtime = args.time_now;
                            
-         retval = tuple3(old_header[ind].valAddr, extend(old_header[ind].nBytes), True);
+         //retval = tuple3(old_header[ind].valAddr, extend(old_header[ind].nBytes), True);
+         retval.addr = old_header[ind].valAddr;
+         retval.nBytes = extend(old_header[ind].nBytes);
+         retval.hit = True;
+         
          newhdr = old_header[ind];
          /*valAddrFifo.enq(tuple3(old_header[ind].valAddr, extend(old_header[ind].nBytes), True));
          newHeaderQ.enq(old_header[ind]);*/
       end
       else if (args.rnw) begin
-         retval = tuple3(?,?,False);
+         //retval = tuple3(?,?,False);
+         retval.hit = False;
          //valAddrFifo.enq(tuple3(?, ?, False));
          doWrite = False;
       end
@@ -158,6 +172,9 @@ module mkHeaderWriter#(ValAlloc_ifc valAlloc, DRAMWriteIfc dramEP)(HeaderWriterI
          // update a new header if no hit
          newVal = True;
       end
+   
+      retval.hv = truncate(args.hv);
+      retval.idx = ind;
    
       if (doWrite)
          dramEP.start(args.hv, args.idx, extend(args.hdrNreq));
@@ -184,7 +201,7 @@ module mkHeaderWriter#(ValAlloc_ifc valAlloc, DRAMWriteIfc dramEP)(HeaderWriterI
       let v <- toGet(finishQ).get();
       return v;
    endmethod
-   method ActionValue#(Tuple3#(Bit#(64), Bit#(64), Bool)) getValAddr();
+   method ActionValue#(HtRespType) getValAddr();
       let v <- toGet(valAddrFifo).get;
       return v;
    endmethod
