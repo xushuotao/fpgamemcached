@@ -12,7 +12,6 @@ import ProtocolHeader::*;
 import RequestSplit::*;
 
 import JenkinsHash::*;
-import HashtableTypes::*;
 import Hashtable::*;
 import Valuestr::*;
 import Time::*;
@@ -20,8 +19,6 @@ import DRAMArbiter::*;
 import DRAMController::*;
 import MyArbiter::*;
 //import MemcachedServer::*;
-
-import ParameterTypes::*;
 
 `ifndef BSIM
 import AuroraEndpointHelper::*;
@@ -61,8 +58,8 @@ module mkMemCached#(DRAMControllerIfc dram, DMAReadIfc rdIfc, DMAWriteIfc wrIfc,
    Reg#(Bool) init <- mkReg(False);
    
 
-   let splitter <- mkReqSplit(rdIfc, auroraIfc.requestPort.recvPort);
-   FIFO#(Bit#(64)) resps <- mkFIFO;   
+   let splitter <- mkReqSplit(rdIfc, auroraIfc.requestPort);
+   
    
    
    /***********Processing Reqs************/
@@ -92,8 +89,8 @@ module mkMemCached#(DRAMControllerIfc dram, DMAReadIfc rdIfc, DMAWriteIfc wrIfc,
    FIFO#(Bit#(64)) keyBuf <- mkSizedBRAMFIFO(512);
    
    
-   FIFO#(MemcacheReqType) hash2table <- mkSizedFIFO(numStages);
-   FIFO#(Tuple2#(MemcacheReqType,Bool)) table2valstr <- mkSizedFIFO(numStages);
+   FIFO#(MemcacheReqType) hash2table <- mkSizedFIFO(16);
+   FIFO#(Tuple2#(MemcacheReqType,Bool)) table2valstr <- mkSizedFIFO(16);
    
    rule doHash;
       //let v <- toGet(cmd2hash).get();
@@ -117,9 +114,9 @@ module mkMemCached#(DRAMControllerIfc dram, DMAReadIfc rdIfc, DMAWriteIfc wrIfc,
    endrule
    
 
-   FIFO#(Tuple3#(Bit#(32), Bool, Bool)) keylenMaxQ <- mkSizedFIFO(numStages);
-   FIFO#(Tuple2#(Bit#(64), Bool)) vallenMaxQ <- mkSizedFIFO(numStages);
-   FIFO#(State_Val) val_stateQ <- mkSizedFIFO(numStages);
+   FIFO#(Tuple3#(Bit#(32), Bool, Bool)) keylenMaxQ <- mkSizedFIFO(16);
+   FIFO#(Tuple2#(Bit#(64), Bool)) vallenMaxQ <- mkSizedFIFO(16);
+   FIFO#(State_Val) val_stateQ <- mkSizedFIFO(16);
    
    rule doTable;
       let v <- toGet(hash2table).get();
@@ -137,7 +134,7 @@ module mkMemCached#(DRAMControllerIfc dram, DMAReadIfc rdIfc, DMAWriteIfc wrIfc,
       else begin
          hv <- hash.getHash();
          let netId = hv&32'b1;
-         if ( myNetId == 0) begin
+         if ( myNetId == 1) begin
             $display("Sending hashtable request to a remote node");
             
             auroraIfc.requestPort.sendPort.sendCmd(MemReqType{opcode:cmd.opcode, keylen:truncate(cmd.keylen), vallen: truncate(nBytes), hv: hv}, 1);
@@ -186,7 +183,6 @@ module mkMemCached#(DRAMControllerIfc dram, DMAReadIfc rdIfc, DMAWriteIfc wrIfc,
          keylenMaxQ.deq();
          lenCnt <= 0;
          routeKeys <= !routeVals;
-         $display("Server:: key2Table reset, routeKeys == %d", !routeVals);
       end
       else begin
          lenCnt <= lenCnt + 8;
@@ -197,7 +193,6 @@ module mkMemCached#(DRAMControllerIfc dram, DMAReadIfc rdIfc, DMAWriteIfc wrIfc,
          auroraIfc.requestPort.sendPort.inPipe.put(d);
       end
       else begin
-         $display("Server:: sening the keys to local htable, value = %h, cnt = %d, cntMax = %d", d, lenCnt, lenMax);
          htable.keyTokens(d);
       end
    endrule
@@ -216,8 +211,7 @@ module mkMemCached#(DRAMControllerIfc dram, DMAReadIfc rdIfc, DMAWriteIfc wrIfc,
          valcnt <= valcnt + 8;
       end
       
-      //let d <- toGet(valFifo).get();
-      let d <- splitter.nextVal.get();
+      let d <- toGet(valFifo).get();
       if (toRemote) begin
          $display("Server:: sending Val to Remote Node, value = %h, valCnt = %d, valCntMax = %d", d, valcnt, valMax);
          auroraIfc.requestPort.sendPort.inPipe.put(d);
@@ -229,7 +223,7 @@ module mkMemCached#(DRAMControllerIfc dram, DMAReadIfc rdIfc, DMAWriteIfc wrIfc,
    endrule
    
    
-   FIFO#(MemcacheRespType) respHeaderQ <- mkSizedFIFO(numStages);
+   FIFO#(MemcacheRespType) respHeaderQ <- mkSizedFIFO(16);
    FIFO#(Bit#(64)) respDataQ <- mkFIFO;
 
    Reg#(Bit#(16)) reqCnt <- mkReg(0);
@@ -267,7 +261,7 @@ module mkMemCached#(DRAMControllerIfc dram, DMAReadIfc rdIfc, DMAWriteIfc wrIfc,
                                        reqId:d.reqId,
                                        nodeId:d.nodeId,
                                        fromRemote:True});
-      if ( cmd.opcode == PROTOCOL_BINARY_CMD_GET && cmd.vallen > 0)
+      if ( cmd.opcode == PROTOCOL_BINARY_CMD_GET)
          wrIfc.writeReq(d.wp, extend(cmd.vallen));
       
 
@@ -288,14 +282,9 @@ module mkMemCached#(DRAMControllerIfc dram, DMAReadIfc rdIfc, DMAWriteIfc wrIfc,
       let opcode = cmd.opcode;
       let v <- htable.getValAddr();
       
-      //let addr = tpl_1(v);
-      //let nBytes = tpl_2(v);
-      //let success = tpl_3(v);
-      let addr = v.addr;
-      let nBytes = v.nBytes;
-      let success = v.hit;
-      let hv = v.hv;
-      let idx = v.idx;
+      let addr = tpl_1(v);
+      let nBytes = tpl_2(v);
+      let success = tpl_3(v);
       
       let respBytes = nBytes; 
       $display("doVal: opcode = %h, addr = %d, nBytes = %d, nodeId is valid = %b", opcode, addr, nBytes, isValid(vv.nodeId));
@@ -312,15 +301,13 @@ module mkMemCached#(DRAMControllerIfc dram, DMAReadIfc rdIfc, DMAWriteIfc wrIfc,
          end
          else if (opcode == PROTOCOL_BINARY_CMD_SET) begin
             $display("doVal: Set Cmd, reqCnt = %d", reqCnt);
-            valstr_acc.writeReq(addr, nBytes, hv, idx);
+            valstr_acc.writeReq(addr, nBytes);
             respBytes = 0;
          end 
       end
       else begin
          responseCode = PROTOCOL_BINARY_RESPONSE_KEY_EEXISTS;
          respBytes = 0;
-         //$finish;
-         $display("doVal: Keys not found in htable, reqCnt = %d", reqCnt);
       end
       
       //if ( !isLocal ) begin
@@ -361,7 +348,7 @@ module mkMemCached#(DRAMControllerIfc dram, DMAReadIfc rdIfc, DMAWriteIfc wrIfc,
    
   // Reg#(Bool) frRemote <- mkRegU();
    
-   FIFO#(Tuple3#(Bit#(64), Bool, Bool)) procValQ <- mkSizedFIFO(numStages);
+   FIFO#(Tuple3#(Bit#(64), Bool, Bool)) procValQ <- mkSizedFIFO(16);
    rule idle_resp;// if (state_output == Idle);
       
       let d <- toGet(respHeaderQ).get();
@@ -400,25 +387,19 @@ module mkMemCached#(DRAMControllerIfc dram, DMAReadIfc rdIfc, DMAWriteIfc wrIfc,
       let localResp_flag = tpl_2(args);
       let frRemote = tpl_3(args);
      
-      if ( vallen_reg_Resp > 0 ) begin
-         Bit#(64) v = ?;
-         if (frRemote) begin
-            let v <- auroraIfc.responsePort.recvPort.outPipe.get();
-            $display("Response Port Remote Node d = %h, val_cnt = %d, val_cnt_max = %d", v, val_cnt_Resp, vallen_reg_Resp);
-            //v = tpl_1(d);
-         end
-         else
-            v <- toGet(respDataQ).get();
-         
-         if (localResp_flag)
-            resps.enq(v);
-         else
-            auroraIfc.responsePort.sendPort.inPipe.put(v);
+      Bit#(64) v = ?;
+      if (frRemote) begin
+         let v <- auroraIfc.responsePort.recvPort.outPipe.get();
+         $display("Response Port Remote Node d = %h, val_cnt = %d, val_cnt_max = %d", v, val_cnt_Resp, vallen_reg_Resp);
+         //v = tpl_1(d);
       end
-      else begin
-         $display("Here I just got a miss");
-      end
-      
+      else
+         v <- toGet(respDataQ).get();
+ 
+      if (localResp_flag)
+         resps.enq(v);
+      else
+         auroraIfc.responsePort.sendPort.inPipe.put(v);
       //$display("Trying to put data into MemEngs, data = %h", v);
       if ( val_cnt_Resp + 8 >= vallen_reg_Resp) begin
          //state_output <= Idle;
@@ -429,8 +410,7 @@ module mkMemCached#(DRAMControllerIfc dram, DMAReadIfc rdIfc, DMAWriteIfc wrIfc,
          val_cnt_Resp <= val_cnt_Resp + 8;
       end
    endrule
-
-   Reg#(Bit#(16)) reqCnt_done <- mkReg(0);
+      
    
    method Action start(Protocol_Binary_Request_Header cmd, Bit#(32) rp, Bit#(32) wp, Bit#(64) nBytes, Bit#(32) id) if (init);
       splitter.localRequest.put(MemcacheReqType{header: cmd, rp: rp, wp: wp, nBytes: nBytes, reqId: id, nodeId: Invalid});
@@ -438,19 +418,17 @@ module mkMemCached#(DRAMControllerIfc dram, DMAReadIfc rdIfc, DMAWriteIfc wrIfc,
    
    method ActionValue#(Tuple2#(Protocol_Binary_Response_Header,Bit#(32))) done();
       //   method ActionValue#(Bit#(RespHeaderSz)) done();
-      $display("request done: reqCnt = %d", reqCnt_done);
-      reqCnt_done <= reqCnt_done + 1;
       let v <- toGet(doneQ).get();
       $display("Memcached doneQ dequeued");
       let cmd = tpl_1(v);
-      if (cmd.opcode == PROTOCOL_BINARY_CMD_GET && cmd.bodylen - extend(cmd.keylen) > 0)
+      if (cmd.opcode == PROTOCOL_BINARY_CMD_GET)
          wrIfc.done();
       return v;
    endmethod
       
    
    interface MemServerIfc server;
-      interface Put request = splitter.inPipe;//toPut(reqs);
+      interface Put request = toPut(reqs);
       interface Get response = toGet(resps);
    endinterface
    

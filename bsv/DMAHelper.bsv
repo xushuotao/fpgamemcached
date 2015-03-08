@@ -9,7 +9,11 @@ import MemwriteEngine::*;
 import Pipe::*;
 import IlaWrapper::*;
 
+import ParameterTypes::*;
+
 import FIFO::*;
+import FIFOF::*;
+import SpecialFIFOs::*;
 
 typedef struct{
    Bit#(32) numBursts;
@@ -142,15 +146,15 @@ module mkDMAWriter#(Server#(MemengineCmd,Bool) wServer,
                     PipeIn#(Bit#(64)) wPipe,
                     DebugDMA dmaDebug
                     )(DMAWriteIfc);
-   Reg#(Bit#(32)) burstCnt <- mkRegU();
-   Reg#(Bit#(32)) numBursts <- mkRegU();
-   Reg#(Bit#(32)) lastBurstSz <- mkRegU();
-   Reg#(Bit#(32)) buffPtr <- mkRegU();
+   Reg#(Bit#(32)) burstCnt <- mkReg(0);
+   //Reg#(Bit#(32)) numBursts <- mkRegU();
+   //Reg#(Bit#(32)) lastBurstSz <- mkRegU();
+   //Reg#(Bit#(32)) buffPtr <- mkRegU();
    
-   Reg#(Bool) busy <- mkReg(False);
+   //Reg#(Bool) busy <- mkReg(False);
    
-   Reg#(Bit#(32)) burstIterCnt <- mkRegU();
-   Reg#(Bit#(32)) numOfResp <- mkRegU();
+   Reg#(Bit#(32)) burstIterCnt <- mkReg(0);
+   //Reg#(Bit#(32)) numOfResp <- mkRegU();
 
    FIFO#(Bit#(64)) reqDtaQ <- mkFIFO;
    FIFO#(Bool) doneQ <- mkFIFO;
@@ -159,23 +163,35 @@ module mkDMAWriter#(Server#(MemengineCmd,Bool) wServer,
    
    mkConnection(toGet(serverReqFifo), wServer.request);
    
-   rule drive_write if (busy && burstCnt <= numBursts);
+   FIFO#(Tuple3#(Bit#(32), Bit#(32), Bit#(32))) cmdQ <- mkSizedFIFO(numStages);
+   FIFO#(Bit#(32)) numOfRespQ <- mkSizedFIFO(numStages);
+   
+   rule drive_write;// if (busy && burstCnt <= numBursts);
+      let v = cmdQ.first;
+      let buffPtr = tpl_1(v);
+      let numBursts = tpl_2(v);
+      let lastBurstSz = tpl_3(v);
       
-      
-      //$display("drWrRq: burstCnt = %d, numBursts = %d", burstCnt, numBursts);
-      if ( burstCnt == numBursts ) begin
-         if ( lastBurstSz != 0) begin
-            //$display("Last request");
-            //wServer.request.put(MemengineCmd{sglId:buffPtr, base:extend(burstCnt<<7), len:truncate(lastBurstSz), burstLen:truncate(lastBurstSz)});
-            serverReqFifo.enq(MemengineCmd{sglId:buffPtr, base:extend(burstCnt<<7), len:truncate(lastBurstSz), burstLen:truncate(lastBurstSz)});
-         end
+      $display("drWrRq: burstCnt = %d, numBursts = %d", burstCnt, numBursts);
+      if ( burstCnt +1 == numBursts && lastBurstSz != 0) begin
+         $display("Last request");
+         //wServer.request.put(MemengineCmd{sglId:buffPtr, base:extend(burstCnt<<7), len:truncate(lastBurstSz), burstLen:truncate(lastBurstSz)});
+         serverReqFifo.enq(MemengineCmd{sglId:buffPtr, base:extend(burstCnt<<7), len:truncate(lastBurstSz), burstLen:truncate(lastBurstSz)});
       end
-      else begin
-         //$display("Normal request");
+      else if ( burstCnt + 1 < numBursts) begin
+         $display("Normal request");
          //wServer.request.put(MemengineCmd{sglId:buffPtr, base:extend(burstCnt<<7), len:128, burstLen:128});
          serverReqFifo.enq(MemengineCmd{sglId:buffPtr, base:extend(burstCnt<<7), len:128, burstLen:128});
       end
-      burstCnt <= burstCnt + 1;
+      
+      if ( burstCnt + 1 < numBursts ) begin
+         burstCnt <= burstCnt + 1;
+      end
+      else begin
+         burstCnt <= 0;
+         cmdQ.deq();
+      end
+      
    endrule
    
    FIFO#(Bool) finishFIFO <- mkFIFO;
@@ -184,45 +200,59 @@ module mkDMAWriter#(Server#(MemengineCmd,Bool) wServer,
       finishFIFO.enq(True);
    endrule
    
-   rule write_finish if (busy);
-      //$display("write_finish %d, %d", burstIterCnt, numOfResp);
-      if ( burstIterCnt < numOfResp) begin
+   rule write_finish;// if (busy);
+      
+      let numOfResp = numOfRespQ.first();
+      $display("write_finish %d, %d", burstIterCnt, numOfResp);
+      if ( numOfResp > 0) 
          let v <- toGet(finishFIFO).get();
+      if ( burstIterCnt + 1 < numOfResp) begin
+         burstIterCnt <= burstIterCnt + 1;
       end
-      else if ( burstIterCnt == numOfResp) begin
+      else  begin
          doneQ.enq(True);
-         busy <= False;
+         burstIterCnt <= 0;
+         numOfRespQ.deq();
+         //busy <= False;
       end
       
-      burstIterCnt <= burstIterCnt + 1;
+      
    endrule
    
    rule drRdResp;
       let v <- toGet(reqDtaQ).get();
       dmaDebug.setData(v);
+      $display("DMA Helper Got Data: %d", v);
       wPipe.enq(v);
    endrule
    
    
-   method Action writeReq(Bit#(32) wp, Bit#(64) nBytes) if (!busy);
+   
+   method Action writeReq(Bit#(32) wp, Bit#(64) nBytes);// if (!busy);
       dmaDebug.setAddr(wp);
       dmaDebug.setBytes(nBytes);
 
-      burstCnt <= 0;
-      numBursts <= truncate(nBytes >> 7);
+      //burstCnt <= 0;
+      //Bit#(32) numBursts = ?;
+      Bit#(32) numOfResp = ?;
+      Bit#(32) lastBurstSz = ?;
+      //numBursts <= truncate(nBytes >> 7);
       if ( nBytes[2:0] == 0 )
-         lastBurstSz <= extend(nBytes[6:0]);
+         lastBurstSz = extend(nBytes[6:0]);
       else
-         lastBurstSz <= extend(nBytes[6:3]+1)<<3;
+         lastBurstSz = extend(nBytes[6:3]+1)<<3;
    
-      buffPtr <= wp;
-      busy <= True;
+      //buffPtr <= wp;
+      //busy <= True;
       
-      burstIterCnt <= 0;
+      //burstIterCnt <= 0;
       if (nBytes[6:0] == 0 )
-         numOfResp <= truncate(nBytes >> 7);
+         numOfResp = truncate(nBytes >> 7);
       else
-         numOfResp <= truncate(nBytes >> 7) + 1;
+         numOfResp = truncate(nBytes >> 7) + 1;
+      
+      cmdQ.enq(tuple3(wp, numOfResp, lastBurstSz));
+      numOfRespQ.enq(numOfResp);
    endmethod
    
    interface Put request = toPut(reqDtaQ);
