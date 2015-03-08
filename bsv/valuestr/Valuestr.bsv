@@ -17,6 +17,8 @@ import Connectable::*;
 
 import ValuestrTypes::*;
 
+import ParameterTypes::*;
+
 /* interface defintions */
 
 interface DebugProbes_Val;
@@ -31,7 +33,7 @@ interface ValAccess_ifc;
    method Action readReq(Bit#(64) startAddr, Bit#(64) nBytes);
    method ActionValue#(Bit#(64)) readVal();
    
-   method Action writeReq(Bit#(64) startAddr, Bit#(64) nBytes);
+   method Action writeReq(Bit#(64) startAddr, Bit#(64) nBytes, Bit#(30) hv, Bit#(2) idx);
    method Action writeVal(Bit#(64) wrVal);
    
    interface DRAMClient dramClient;
@@ -94,7 +96,13 @@ module mkValRawAccess(ValAccess_ifc);
    rule updateHeader if (state == ProcHeader);
       let cmd <- toGet(cmdQ).get();
       //let cmd = cmdQ.first();
-      dramCmdQ_Imm.enq(DRAMReqType_Imm{rnw:False, addr: cmd.currAddr, data:extend(pack(real_time.get_time)), numBytes:fromInteger(valueOf(TDiv#(SizeOf#(Time_t),8))), shiftval: 0});
+      
+      if (cmd.rnw) begin
+         dramCmdQ_Imm.enq(DRAMReqType_Imm{rnw:False, addr: cmd.currAddr, data:extend(pack(real_time.get_time)), numBytes:fromInteger(valueOf(TDiv#(SizeOf#(Time_t),8))), shiftval: 0});
+      end
+      else begin
+         dramCmdQ_Imm.enq(DRAMReqType_Imm{rnw:False, addr: cmd.currAddr, data:extend({pack(real_time.get_time), cmd.hv, cmd.idx}), numBytes: fromInteger(valueOf(TDiv#(ValHeaderSz,8))), shiftval: 0});
+      end
      
       cmd.currAddr = cmd.currAddr + fromInteger(valueOf(TDiv#(ValHeaderSz,8)));
       if (cmd.rnw ) 
@@ -106,7 +114,7 @@ module mkValRawAccess(ValAccess_ifc);
       state <= Proc;
    endrule
 
-   FIFO#(RespHandleType) respHandleQ <- mkSizedFIFO(16);
+   FIFO#(RespHandleType) respHandleQ <- mkSizedFIFO(numStages);
    
    rule driveReadCmd if (state == Proc);// && cmdQ_2.first().rnw());
       let cmd = cmdQ_Rd.first();
@@ -226,9 +234,9 @@ module mkValRawAccess(ValAccess_ifc);
    endrule
          
    Reg#(Bit#(32)) burstCnt <- mkReg(0);
-   //FIFO#(Bit#(64)) wDataWord <- mkFIFO;
+   FIFO#(Bit#(64)) wDataWord <- mkFIFO;
    //FIFO#(Bit#(64)) wDataWord <- mkSizedBRAMFIFO(131072);
-   FIFO#(Bit#(64)) wDataWord <- mkSizedBRAMFIFO(512);
+   //FIFO#(Bit#(64)) wDataWord <- mkSizedBRAMFIFO(512);
    //FIFO#(Bit#(64)) wDataWord <- mkSizedBRAMFIFO(65536);
    rule driveWriteCmd if (state == Proc);// && !cmdQ_Wr.first().rnw);
       let cmd = cmdQ_Wr.first();
@@ -357,7 +365,7 @@ module mkValRawAccess(ValAccess_ifc);
       return d;
    endmethod
    
-   method Action writeReq(Bit#(64) startAddr, Bit#(64) nBytes);// if (state == Idle);
+   method Action writeReq(Bit#(64) startAddr, Bit#(64) nBytes, Bit#(30) hv, Bit#(2) idx);
       $display("Valuestr Get write req, startAddr = %d, nBytes = %d, reqId = %d", startAddr, nBytes, reqCnt);
       Bit#(6) offset_local = truncate(startAddr + fromInteger(valueOf(TDiv#(ValHeaderSz,8))));
       
@@ -367,7 +375,7 @@ module mkValRawAccess(ValAccess_ifc);
       else
          numBursts = zeroExtend(nBytes[31:3]) + 1;
 
-      cmdQ.enq(CmdType{currAddr:startAddr, initNbytes: 64 - extend(offset_local), numBytes: truncate(nBytes), numBursts: numBursts, rnw: False});
+      cmdQ.enq(CmdType{currAddr:startAddr, initNbytes: 64 - extend(offset_local), numBytes: truncate(nBytes), numBursts: numBursts, rnw: False, hv: hv, idx: idx});
       //rnw <= False;
       reqCnt <= reqCnt + 1;
       wrReq <= BurstReq{addr: startAddr, nBytes: nBytes};

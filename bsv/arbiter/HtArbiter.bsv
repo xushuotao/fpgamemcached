@@ -2,6 +2,7 @@ package HtArbiter;
 
 import FIFO::*;
 import FIFOF::*;
+import SpecialFIFOs::*;
 import Vector::*;
 import GetPut::*;
 import ClientServer::*;
@@ -12,6 +13,8 @@ import DRAMArbiterTypes::*;
 import DRAMArbiter::*;
 import Scoreboard::*;
 import MyArbiter::*;
+
+import ParameterTypes::*;
 
 
 interface DRAMReadIfc;
@@ -41,6 +44,7 @@ module mkHtArbiter(HtArbiterIfc);
    
    /* request fifos */
    Vector#(4, FIFO#(Tuple3#(Bit#(32), Bit#(8), Bit#(32)))) reqFifos <- replicateM(mkFIFO);
+   //Vector#(4, FIFO#(Tuple3#(Bit#(32), Bit#(8), Bit#(32)))) reqFifos <- replicateM(mkBypassFIFO);
    let hdrRd_reqs = reqFifos[0];
    let keyRd_reqs = reqFifos[2];
    let hdrWr_reqs = reqFifos[1];
@@ -54,20 +58,25 @@ module mkHtArbiter(HtArbiterIfc);
    let keyWr_ddrReqs = ddrReqFifos[3];
    
    /* dram resp fifos */
-   Vector#(2, FIFO#(Bit#(512))) ddrRespFifos <- replicateM(mkFIFO);
+   //Vector#(2, FIFO#(Bit#(512))) ddrRespFifos <- replicateM(mkFIFO);
+   Vector#(2, FIFO#(Bit#(512))) ddrRespFifos <- replicateM(mkSizedFIFO(32));
    let hdrRd_ddrResps = ddrRespFifos[0];
    let keyRd_ddrResps = ddrRespFifos[1];
 
+   
+   Vector#(4, FIFO#(DRAMReq)) ddrCmdQs <- replicateM(mkFIFO());
+   FIFO#(Bit#(2)) selQ <- mkFIFO();
    
    FIFO#(DRAMReq) dramCmdQ <- mkFIFO;
    FIFO#(Bit#(1)) tagQ <- mkSizedFIFO(32);
    FIFO#(Bit#(512)) dramDataQ <- mkSizedFIFO(32);
    
-   FIFO#(Bit#(8)) reqIdQ <- mkSizedFIFO(32);
+   FIFO#(Bit#(8)) reqIdQ <- mkSizedFIFO(numStages);
 
    
    
-   ScoreboardIfc#(8) sb <- mkScoreboard;
+   //ScoreboardIfc#(8) sb <- mkScoreboard;
+   ScoreboardIfc#(NUM_STAGES) sb <- mkScoreboard;
    
    //* arbitration things *
    
@@ -78,6 +87,7 @@ module mkHtArbiter(HtArbiterIfc);
    
    Reg#(Bit#(32)) reqCnt_hdrRd <- mkReg(0);
    FIFOF#(Bit#(32)) reqMax_hdrRdQ <- mkFIFOF();
+   //FIFOF#(Bit#(32)) reqMax_hdrRdQ <- mkBypassFIFOF();
    
    
    
@@ -90,13 +100,13 @@ module mkHtArbiter(HtArbiterIfc);
       
    endrule
   
-   rule doStart_hdrRd_1;
+   rule doStart_hdrRd_1 (reqMax_hdrRdQ.notFull);
       let v = hdrRd_reqs.first();
       let hv = tpl_1(v);
       let numReqs = tpl_3(v);
   
       let val = sb.hdrGrant();
-      $display("hdrRequest get grant", val);
+      //$display("hdrRequest get grant is valid =%b, idx = %d", isValid(val), fromMaybe(?,val));
       if ( isValid(val) ) begin
          let idx = fromMaybe(?, val);
          reqIdQ.enq(extend(idx));
@@ -112,6 +122,12 @@ module mkHtArbiter(HtArbiterIfc);
    endrule
    
    rule issueCmd_hdrRd_1 if (grant_vector[0]);
+      let args <- toGet(ddrReqFifos[0]).get();
+      //dramCmdQ.enq(DRAMReq{rnw:args.rnw, addr: args.addr, data: args.data, numBytes: args.numBytes});
+      //tagQ.enq(0);
+      ddrCmdQs[0].enq(DRAMReq{rnw:args.rnw, addr: args.addr, data: args.data, numBytes: args.numBytes});
+      selQ.enq(0);
+      
       let reqMax_hdrRd = reqMax_hdrRdQ.first();
       if ( reqCnt_hdrRd + 1 >= reqMax_hdrRd ) begin
          reqMax_hdrRdQ.deq();
@@ -129,6 +145,9 @@ module mkHtArbiter(HtArbiterIfc);
    
    FIFO#(Tuple2#(Bit#(32),Bit#(8))) currCmd_keyRd <- mkFIFO();
    FIFO#(Bit#(32)) reqMax_keyRdQ <- mkFIFO();
+
+   //FIFO#(Tuple2#(Bit#(32),Bit#(8))) currCmd_keyRd <- mkBypassFIFO();
+   //FIFO#(Bit#(32)) reqMax_keyRdQ <- mkBypassFIFO();
    
    rule doStart_keyRd;
       let v = keyRd_reqs.first();
@@ -150,7 +169,7 @@ module mkHtArbiter(HtArbiterIfc);
    endrule
 
    rule issueCmd_keyRd_1;
-      $display("sb.keyGrant() = %b, reqCnt_keyRd = %d, reqCnt_keyWr = %d",sb.keyGrant(), reqCnt_keyRd, reqCnt_keyWr);
+      //$display("sb.keyGrant() = %b, reqCnt_keyRd = %d, reqCnt_keyWr = %d",sb.keyGrant(), reqCnt_keyRd, reqCnt_keyWr);
       if (sb.keyGrant()) begin
          arbiter.clients[1].request();
       end
@@ -158,14 +177,26 @@ module mkHtArbiter(HtArbiterIfc);
          arbiter.clients[1].request();
       end
    endrule
-   
+   Reg#(Bit#(16)) reqCnt <- mkReg(8);
    rule issueCmd_keyRd_2 if (grant_vector[1]);
+      let args <- toGet(ddrReqFifos[1]).get();
+      $display("HtArbiter enqueuing dramReq addr=%d, reqCnt = %d", args.addr, reqCnt);
+      
+      //dramCmdQ.enq(DRAMReq{rnw:args.rnw, addr: args.addr, data: args.data, numBytes: args.numBytes});
+      //tagQ.enq(1);
+      ddrCmdQs[1].enq(DRAMReq{rnw:args.rnw, addr: args.addr, data: args.data, numBytes: args.numBytes});
+      selQ.enq(1);
+     
       let reqMax_keyRd = reqMax_keyRdQ.first();
       let v = keyRd_reqs.first();
       let hv = tpl_1(v);
       let idx = tpl_2(v);
   
       if ( reqCnt_keyRd + 1 >= reqMax_keyRd ) begin
+         if ((reqCnt & 15) == 15)
+            reqCnt <= reqCnt + 9;
+         else
+            reqCnt <= reqCnt + 1;
          reqMax_keyRdQ.deq();
          currCmd_keyRd.deq();
          reqCnt_keyRd <= 0;
@@ -181,6 +212,9 @@ module mkHtArbiter(HtArbiterIfc);
    Reg#(Bit#(32)) reqCnt_hdrWr <- mkReg(0);
    FIFO#(Bit#(32)) reqMax_hdrWrQ <- mkFIFO();
    FIFO#(Bit#(8)) idxQ_hdrWr <- mkFIFO();
+
+   //FIFO#(Bit#(32)) reqMax_hdrWrQ <- mkBypassFIFO();
+   //FIFO#(Bit#(8)) idxQ_hdrWr <- mkBypassFIFO();
    
    rule doStart_hdrWr;
       let v = hdrWr_reqs.first();
@@ -198,6 +232,11 @@ module mkHtArbiter(HtArbiterIfc);
    endrule
    
    rule issueCmd_hdrWr_2 if (grant_vector[2]);
+      let args <- toGet(ddrReqFifos[2]).get();
+      //dramCmdQ.enq(DRAMReq{rnw:args.rnw, addr: args.addr, data: args.data, numBytes: args.numBytes});
+      ddrCmdQs[2].enq(DRAMReq{rnw:args.rnw, addr: args.addr, data: args.data, numBytes: args.numBytes});
+      selQ.enq(2);
+      
       let idx = idxQ_hdrWr.first();
       let reqMax_hdrWr = reqMax_hdrWrQ.first();
       if ( reqCnt_hdrWr + 1 >= reqMax_hdrWr ) begin
@@ -216,12 +255,17 @@ module mkHtArbiter(HtArbiterIfc);
    FIFO#(Bit#(32)) reqMax_keyWrQ <- mkFIFO();
    FIFO#(Bit#(8)) idxQ_keyWr <- mkFIFO();
    
+   //FIFO#(Bit#(32)) reqMax_keyWrQ <- mkBypassFIFO();
+   //FIFO#(Bit#(8)) idxQ_keyWr <- mkBypassFIFO();
+   
+   
    rule doStart_keyWr;
       let v = keyWr_reqs.first();
       let hv = tpl_1(v);
       let idx = tpl_2(v);
       let numReqs = tpl_3(v);
       
+      //$display("doStart_keyWr, hv = %h, idx = %d, numReqs = %d", hv, idx, numReqs);
       if (numReqs > 0) begin
          reqMax_keyWrQ.enq(numReqs);
          idxQ_keyWr.enq(idx);
@@ -238,9 +282,15 @@ module mkHtArbiter(HtArbiterIfc);
    endrule
    
    rule issueCmd_keyWr_2 if (grant_vector[3]);
+      let args <- toGet(ddrReqFifos[3]).get();
+      //dramCmdQ.enq(DRAMReq{rnw:args.rnw, addr: args.addr, data: args.data, numBytes: args.numBytes});
+      ddrCmdQs[3].enq(DRAMReq{rnw:args.rnw, addr: args.addr, data: args.data, numBytes: args.numBytes});
+      selQ.enq(3);
+      
       let v = keyWr_ddrReqs.first;
       let idx = idxQ_keyWr.first;
       let reqMax_keyWr = reqMax_keyWrQ.first();
+      //$display("issueCmd_keyWr_2, idx = %d, reqCnt_keyWr = %d, keyMax_keyWr = %d", idx, reqCnt_keyWr, reqMax_keyWr);
       if ( reqCnt_keyWr + 1 >= reqMax_keyWr ) begin
          idxQ_keyWr.deq();
          reqMax_keyWrQ.deq();
@@ -259,7 +309,7 @@ module mkHtArbiter(HtArbiterIfc);
       endrule
    end
    */
-         
+   /*
    rule doGrant;
       let grant = arbiter.grant_id;
       let args <- toGet(ddrReqFifos[grant]).get;
@@ -270,19 +320,61 @@ module mkHtArbiter(HtArbiterIfc);
          tagQ.enq(truncate(grant));
       
    endrule
+   */
+   
+   rule doDDRCmd;
+      let sel <- toGet(selQ).get();
+      let args <- toGet(ddrCmdQs[sel]).get();
+      dramCmdQ.enq(args);
+      if (args.rnw)
+         tagQ.enq(truncate(sel));
+   endrule
+      
+   
+   for ( Integer i = 0; i < 4; i = i + 1) begin
+      rule doDDRReq if ( arbiter.grant_id == fromInteger(i) );
+         let grant = arbiter.grant_id;
+         //if ( grant == fromInteger(i)) begin
+         grant_vector[i].send();
+         /*
+         let args <- toGet(ddrReqFifos[i]).get();
+         $display("\x1b[31m(%t)HtArbiter issue request from %d\x1b[0m", $time, grant);
+         dramCmdQ.enq(DRAMReq{rnw:args.rnw, addr: args.addr, data: args.data, numBytes: args.numBytes});
+         if (args.rnw)
+            tagQ.enq(truncate(grant));
+         //end
+          */
+      endrule
+   end
+      
+         
       
    /*rule dereturn;
       let tag <- toGet(tagQ).get;
       ddrRespFifos[tag].enq(0);
    endrule*/
-   
+   /*
    rule doRecv;
       let data <- toGet(dramDataQ).get;
       let tag <- toGet(tagQ).get;
       ddrRespFifos[tag].enq(data);
    endrule
-
+   */
    
+   for (Integer i = 0; i < 2; i = i + 1) begin
+      rule doDDRResp if ( tagQ.first() == fromInteger(i));
+         //let tag = tagQ.first();
+         let data = dramDataQ.first();
+         //if ( tag == fromInteger(i)) begin
+         tagQ.deq();
+         dramDataQ.deq();
+         //$display("ddrRespFifo[%d] enqueuing data = %h", i, data);
+         ddrRespFifos[i].enq(data);
+         //end
+      endrule
+   end
+         
+      
    
    interface DRAMReadIfc hdrRd;
       method Action start(Bit#(32) hv, Bit#(8) idx, Bit#(32) numReqs);

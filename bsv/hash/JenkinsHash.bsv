@@ -50,7 +50,7 @@ interface SerializerIfc;
 endinterface
 
 module mkSerializer(SerializerIfc);
-   FIFO#(PacketType) inputFifo <- mkBypassFIFO;
+   FIFOF#(PacketType) inputFifo <- mkBypassFIFOF;
    FIFO#(Bit#(96)) outputFifo <- mkBypassFIFO;
    //Bit#(8) inputPtr <- mkReg(16);
    Reg#(Bit#(8)) outputPtr <- mkReg(0);
@@ -96,9 +96,22 @@ module mkSerializer(SerializerIfc);
       end
       else begin
          outputFifo.enq(truncate(buff));
-         outputPtr <= 0;
-         buff <= 0;
+         
          last <= False;
+         if (inputFifo.notEmpty) begin
+            let v = inputFifo.first();
+            let word = v.packet;
+            let cont = v.cont;
+            if ( cont ) begin
+               buff <= extend(word);
+               inputFifo.deq();
+               outputPtr <= 8;
+            end
+         end
+         else begin
+            outputPtr <= 0;
+            buff <= 0;
+         end
       end
 
 

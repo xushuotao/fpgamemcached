@@ -76,7 +76,7 @@ module mkArbiter#(Bool fixed) (Arbiter_IFC#(count));
                   found = True;
                end*/
 	 end
-
+      
       // Update the RWire
       for (Integer i = 0; i < icount; i = i + 1) begin
          //if (request_vector[i]) begin
@@ -84,14 +84,21 @@ module mkArbiter#(Bool fixed) (Arbiter_IFC#(count));
          //end
       end
       grant_id_wire <= grant_id_local;
-
+      
+      /*
+      $display("Priority Vector", fshow(priority_vector));
+      $display("Request Vector", fshow(map(isPulseTrue,request_vector)));
+      $display("Grant Vector", fshow(grant_vector_local));
+      */
       // If a grant was given, update the priority vector so that
       // client now has lowest priority.
-      if (any(isTrue,grant_vector_local) && !fixed)
+      if (any(isTrue,grant_vector_local))
 	 begin
 	    //$display("(%5d) Updating priorities", $time);
-	    priority_vector <= rotateR(grant_vector_local);
-            //priority_vector <= grant_vector_local;
+            if (!fixed)
+	       priority_vector <= rotateR(grant_vector_local);
+            else
+               priority_vector <= grant_vector_local;
 	 end
 
 

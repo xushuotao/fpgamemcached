@@ -122,7 +122,7 @@ instance Connectable#(DRAMClient, DRAMControllerIfc);
       endrule
    
       rule doData;
-         $display("DRAM Arbiter got read value from DRAMController at %t",$time);
+         //$display("DRAM Arbiter got read value from DRAMController at %t",$time);
          let v <- dram.read;
          dramClient.response.put(v);
       endrule
