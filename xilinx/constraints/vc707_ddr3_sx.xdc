@@ -817,26 +817,29 @@ set_max_delay -datapath_only -from [get_cells -hier -filter {NAME =~ *ddr3_infra
 #create_generated_clock -name ddr3_refclk -source [get_pins portalTop_clk_gen_pll/CLKIN1] -multiply_by 5 -divide_by 5 [get_pins portalTop_clk_gen_pll/CLKOUT1]
 
 #create_generated_clock -name ddr3_usrclk -source [get_pins *sys_clk_200mhz_buf/O] -multiply_by 5 -divide_by 5 [get_pins portalTop_ddr3_ctrl/portalTop_ddr3_ctrl_ui_clk]
-#create_generated_clock -name ddr3_usrclk -source [get_pins portalTop_clk_gen_pll/CLKIN1] -multiply_by 5 -divide_by 5 [get_pins portalTop_ddr3_ctrl/portalTop_ddr3_ctrl_ui_clk]
+#
 
 
 create_clock -name ddr3_refclk -period 5 [get_pins host_sys_clk_200mhz_buf/O] 
 #create_clock -name ddr3_usrclk -period 5 [get_pins portalTop_ddr3_ctrl/portalTop_ddr3_ctrl_ui_clk]
-create_generated_clock -name ddr3_usrclk -source [get_pins host_sys_clk_200mhz_buf/O] -multiply_by 5 -divide_by 5 [get_pins *ui_clk]
+#create_generated_clock -name ddr3_usrclk -source [get_pins host_sys_clk_200mhz_buf/O] -multiply_by 5 -divide_by 5 [get_pins *ui_clk]
+create_generated_clock -name ddr3_usrclk -source [get_pins host_sys_clk_200mhz_buf/O] -multiply_by 5 -divide_by 5 [get_pins portalTop_ddr3_ctrl/portalTop_ddr3_ctrl_ui_clk]
 
 #create_clock -name top_x7pcie_sys_clk_100mhz -period 10 [get_pins host_pci_clk_100mhz_buf/O]
 #create_generated_clock -name app_clk -source [get_pins *ep7/pcie_ep/inst/inst/gt_top_i/pipe_wrapper_i/pipe_lane[0].gt_wrapper_i/gtx_channel.gtxe2_channel_i/TXOUTCLK] -multiply_by 10 -divide_by 8 [get_pins host_ep7/CLK_epClock125]
 #create_clock -name app_clk -period 8 [get_pins host_ep7/CLK_epClock125]
-create_generated_clock -name app_clk -source [get_pins */clkgen_pll/CLKIN1] -divide_by 2 [get_pins */clkgen_pll/CLKOUT0]
+#create_generated_clock -name app_clk -source [get_pins */clkgen_pll/CLKIN1] -divide_by 2 [get_pins */clkgen_pll/CLKOUT0]
 
 #set_clock_groups -name _ddr3_app_clk -physically_exclusive -group [get_clocks app_clk] -group [get_clocks ddr3_usrclk]
 
-set_max_delay -from [get_clocks app_clk] -to [get_clocks ddr3_usrclk] 5.000 -datapath_only
-set_max_delay -from [get_clocks ddr3_usrclk] -to [get_clocks app_clk] 5.000 -datapath_only
+#set_max_delay -from [get_clocks app_clk] -to [get_clocks ddr3_usrclk] 5.000 -datapath_only
+#set_max_delay -from [get_clocks ddr3_usrclk] -to [get_clocks app_clk] 5.000 -datapath_only
 
-set_clock_groups -asynchronous \
--group {app_clk} \
--group {ddr3_refclk}
+set_max_delay -from [get_clocks clk_125mhz] -to [get_clocks ddr3_usrclk] 5.000 -datapath_only
+set_max_delay -from [get_clocks ddr3_usrclk] -to [get_clocks clk_125mhz] 5.000 -datapath_only
+
+#set_clock_groups -asynchronous -group {app_clk} -group {ddr3_refclk}
+set_clock_groups -asynchronous -group {clk_125mhz} -group {ddr3_refclk}
 
 #set_false_path -through [get_pins host_ep7/RST_N_epReset125]
 
