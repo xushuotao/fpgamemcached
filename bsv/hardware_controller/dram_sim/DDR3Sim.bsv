@@ -27,6 +27,8 @@ import Clocks::*;
 import FIFO::*;
 import Vector::*;
 import RegFile::*;
+import Connectable::*;
+import GetPut::*;
 
 //import XilinxVC707DDR3::*;
 
@@ -65,6 +67,17 @@ module mkDDR3Simulator(DDR3_User_VC707_Sim);
       return pack(unrotated);
    endfunction
    
+   Vector#(32, FIFO#(DDR3Data)) delayQs <- replicateM(mkFIFO());
+   
+   for (Integer i = 0; i < 31; i = i + 1) begin
+      mkConnection(toGet(delayQs[i]), toPut(delayQs[i+1]));
+    /*  rule doDelay;
+         let v <- toGet(delayQs[i]).get();
+         $display("%t %d %h", $time, i , v);
+         delayQs[i+1].enq(v);
+      endrule*/
+   end
+   
    interface clock = user_clock;
    interface reset_n = user_reset_n;
    method Bool init_done() = True;
@@ -90,13 +103,16 @@ module mkDDR3Simulator(DDR3_User_VC707_Sim);
       //data[burstaddr] <=  new_unrotated;
       
       if (writeen == 0) begin
-         responses.enq(new_rotated);
+         //responses.enq(new_rotated);
+         delayQs[0].enq(new_rotated);
       end
    endmethod
       
    method ActionValue#(DDR3Data) read_data;
-      responses.deq();
-      return responses.first();
+      //let v <- toGet(responses).get();
+      let v <- toGet(delayQs[31]).get();
+      //$display("last, %d, %h", $time, v);
+      return v;
    endmethod
       
 endmodule
