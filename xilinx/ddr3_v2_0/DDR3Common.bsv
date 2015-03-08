@@ -17,7 +17,7 @@ import FIFOF             ::*;
 import SpecialFIFOs      ::*;
 import TriState          ::*;
 import DefaultValue      ::*;
-//import Counter           ::*;
+import Counter           ::*;
 import CommitIfc         ::*;
 import Memory            ::*;
 import GetPut            ::*;
@@ -26,7 +26,7 @@ import BUtils            ::*;
 import I2C               ::*;
 import Connectable       ::*;
 
-import Cntrs::*;
+//import Cntrs::*;
 
 ////////////////////////////////////////////////////////////////////////////////
 /// Exports
@@ -216,9 +216,12 @@ module mkXilinxDDR3Controller_2_1_#(VDDR3_Controller_Xilinx#(`DDR3_PRM) ddr3Ifc,
    FIFO#(DDR3Request#(ddr3addrsize,
 		      ddr3datasize,
 		      ddr3besize))           fRequest            <- mkFIFO(clocked_by user_clock, reset_by user_reset_n);
-   FIFO#(DDR3Response#(ddr3datasize))        fResponse           <- mkSizedFIFO(reads, clocked_by user_clock, reset_by user_reset_n);
+   //FIFO#(DDR3Response#(ddr3datasize))        fResponse           <- mkSizedFIFO(reads, clocked_by user_clock, reset_by user_reset_n);
+   FIFO#(DDR3Response#(ddr3datasize))        fResponse           <- mkFIFO(clocked_by user_clock, reset_by user_reset_n);
    
-   Count#(Int#(32))                         rReadsPending       <- mkCount(0, clocked_by user_clock, reset_by user_reset_n);
+   //Count#(Int#(32))                         rReadsPending       <- mkCount(0, clocked_by user_clock, reset_by user_reset_n);
+   Counter#(32)                              rReadsPending       <- mkCounter(0, clocked_by user_clock, reset_by user_reset_n);
+
   
    PulseWire                                 pwAppEn             <- mkPulseWire(clocked_by user_clock, reset_by user_reset_n);
    PulseWire                                 pwAppWdfWren        <- mkPulseWire(clocked_by user_clock, reset_by user_reset_n);
@@ -264,17 +267,20 @@ module mkXilinxDDR3Controller_2_1_#(VDDR3_Controller_Xilinx#(`DDR3_PRM) ddr3Ifc,
 	 pwAppWdfEnd.send;
       endrule
       
-      rule process_read_request(fRequest.first.byteen == 0 && ctrl_ready_req && rReadsPending < fromInteger(reads));
+      //rule process_read_request(fRequest.first.byteen == 0 && ctrl_ready_req && rReadsPending < fromInteger(reads));
+      rule process_read_request(fRequest.first.byteen == 0 && ctrl_ready_req);
 	 let request <- toGet(fRequest).get;
 	 wAppCmd  <= 1;
 	 wAppAddr <= request.address;
 	 pwAppEn.send;
-	 rReadsPending.incr(1);
+	 //rReadsPending.incr(1);
+         rReadsPending.up;
       endrule
       
       rule process_read_response(read_data_ready);
 	 fResponse.enq(unpack(ddr3Ifc.user.app_rd_data));
-	 rReadsPending.decr(1);
+	 //rReadsPending.decr(1);
+         rReadsPending.down;
       endrule
    endrule
 
