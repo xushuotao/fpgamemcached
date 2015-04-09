@@ -64,7 +64,7 @@ module mkEvictionBufFlush#(FlashCtrlUser flash)(EvictionBufFlushIFC);
       
       let req = flashCmdQ.first();
       
-      FlashAddrType addr = unpack(truncate({req.segId, byteCnt_flash}));
+      FlashAddrType addr = unpack({req.segId, byteCnt_flash});
       /*
       if (pageCnt + 1 == 0 ) begin
          flashCmdQ.deq();

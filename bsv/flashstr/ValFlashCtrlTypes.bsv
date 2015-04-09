@@ -11,14 +11,17 @@ typedef TDiv#(TotalSz, SuperPageSz) NumSuperPages;
 
 typedef Bit#(TLog#(PageSz)) PageOffsetT;
 
+typedef Bit#(TLog#(NumSuperPages)) SuperPageIndT;
+
 Integer pageSz = valueOf(PageSz);
 Integer superPageSz = valueOf(SuperPageSz);
 
 
-typedef struct{
+
+/*typedef struct{
    Bit#(32) nBytes;
    Bit#(6) wordOffset;
-   } FlashWriteCmdT deriving (Bits, Eq);
+   } FlashWriteCmdT deriving (Bits, Eq);*/
 
 typedef struct{
    Bit#(32) numBytes;
@@ -48,12 +51,11 @@ typedef struct{
 typedef struct{
    FlashAddrType addr;
    ValSizeT numBytes;
-   TagT reqId;
    } FlashReadReqT deriving (Bits, Eq);
 
 typedef struct{
    Bit#(1) bufId;
-   Bit#(32) segId;
+   SuperPageIndT segId;
    } FlushReqT deriving (Bits, Eq);
 
 /*typedef TMul#(WriteBufSz,PagesPerBlock) SegmentSz;
