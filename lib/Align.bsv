@@ -188,7 +188,7 @@ module mkByteDeAlignPipeline(DeAlignIfc#(element_type, tag_type, lgWidth))
          sfter.rotateByteBy(extend(pack(word)), 0);
       end
       else begin
-         $display("shift data = %h, rotate = %d", {pack(word), pack(readCache)}, leftOverBytes);
+         //$display("shift data = %h, rotate = %d", {pack(word), pack(readCache)}, leftOverBytes);
          sfter.rotateByteBy({pack(word), pack(readCache)}, extend(leftOverBytes));
       end
       

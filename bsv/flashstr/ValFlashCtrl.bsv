@@ -1,4 +1,3 @@
-
 import AuroraImportFmc1::*;
 import ControllerTypes::*;
 import AuroraCommon::*;

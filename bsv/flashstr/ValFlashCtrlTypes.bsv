@@ -51,6 +51,7 @@ typedef struct{
 typedef struct{
    FlashAddrType addr;
    ValSizeT numBytes;
+   TagT reqId;
    } FlashReadReqT deriving (Bits, Eq);
 
 typedef struct{

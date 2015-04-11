@@ -11,38 +11,55 @@ import MyArbiter::*;
 
 
 interface TagServer;
-   interface Get#(TagT) reqTag;
+   interface Server#(Bit#(32), TagT) reqTag;
    interface Put#(TagT) retTag;
 endinterface
 
 interface TagClient;
-   interface Put#(TagT) reqTag;
+   interface Client#(Bit#(32), TagT) reqTag;
    interface Get#(TagT) retTag;
 endinterface
 
 
 module mkTagAlloc(TagServer);
+   FIFO#(Bit#(32)) reqQ <- mkFIFO;
+   FIFO#(TagT) respQ <- mkFIFO;
+   
    FIFO#(TagT) freeTagQ <- mkSizedFIFO(valueOf(NumTags));
    
    Reg#(TagT) newTag <- mkReg(0);
    Reg#(Bool) initialized <- mkReg(False);
    
-   interface Get reqTag;
-      method ActionValue#(TagT) get;
-         TagT nextTag = ?;
-         if ( !initialized ) begin
-            nextTag = newTag;
-            newTag <= newTag + 1;
-            if ( newTag + 1 == -1 )
-               initialized <= True;
-         end
-         else
-            nextTag <- toGet(freeTagQ).get;
+   Reg#(Bit#(32)) tagCnt <- mkReg(0);
+   rule doAllocTag;
+      let numTags = reqQ.first();
+      if ( tagCnt + 1 == numTags ) begin
+         reqQ.deq();
+         tagCnt <= 0;
+      end
+      else begin
+         tagCnt <= tagCnt + 1;
+      end
+            
+      TagT nextTag = ?;
+      if ( !initialized ) begin
+         nextTag = newTag;
+         newTag <= newTag + 1;
+         if ( newTag + 1 == -1 )
+            initialized <= True;
+      end
+      else
+         nextTag <- toGet(freeTagQ).get;
       
-         $display("Next tag is %d", nextTag);
+      $display("Next tag is %d", nextTag);
+      
+      respQ.enq(nextTag);
    
-         return nextTag;
-      endmethod
+   endrule
+   
+   interface Server reqTag;
+      interface Put request = toPut(reqQ);
+      interface Get response = toGet(respQ);
    endinterface
       
    interface Put retTag = toPut(freeTagQ);
@@ -56,22 +73,40 @@ interface TagAllocArbiterIFC#(numeric type numServers);
 endinterface
 
 module mkTagAllocArbiter(TagAllocArbiterIFC#(numServers));
-   Vector#(numServers, FIFOF#(TagT)) reqTagQs <- replicateM(mkFIFOF);
+   Vector#(numServers, FIFOF#(Bit#(32))) reqQs <- replicateM(mkFIFOF);
+   FIFO#(Tuple2#(Bit#(TLog#(numServers)), Bit#(32))) reqIdQ <- mkFIFO();
+   Vector#(numServers, FIFOF#(TagT)) respQs <- replicateM(mkFIFOF);
+   
    Vector#(numServers, FIFOF#(TagT)) retTagQs <- replicateM(mkFIFOF);
    
-   FIFOF#(TagT) newTagQ <- mkFIFOF();
+   FIFO#(Bit#(32)) reqQ <- mkFIFO;
+   FIFOF#(TagT) respQ <- mkFIFOF();
    FIFO#(TagT) usedTagQ <- mkFIFO();
    
    Arbiter_IFC#(numServers) arbiter <- mkArbiter(False);
 
    for (Integer i = 0; i < valueOf(numServers); i = i + 1) begin
-      rule doReqs_0 if (reqTagQs[i].notFull && newTagQ.notEmpty());
+      rule doReqs_0 if (reqQs[i].notEmpty());//;(reqTagQs[i].notFull && respQ.notEmpty());
          arbiter.clients[i].request;
       endrule
       
       rule doReqs_1 if (arbiter.grant_id == fromInteger(i));
-         let newTag <- toGet(newTagQ).get();
-         reqTagQs[i].enq(newTag);
+         let v <- toGet(reqQs[i]).get();
+         reqQ.enq(v);
+         reqIdQ.enq(tuple2(fromInteger(i), v));
+      endrule
+      
+      Reg#(Bit#(32)) tagCnt <- mkReg(0);
+      rule doResp_1 if ( tpl_1(reqIdQ.first) == fromInteger(i));
+         if ( tagCnt + 1 == tpl_2(reqIdQ.first) ) begin
+            tagCnt <= 0;
+            reqIdQ.deq();
+         end
+         else begin
+            tagCnt <= tagCnt + 1;
+         end
+         let tag <- toGet(respQ).get();
+         respQs[i].enq(tag);
       endrule
    end
    
@@ -92,15 +127,21 @@ module mkTagAllocArbiter(TagAllocArbiterIFC#(numServers));
    Vector#(numServers, TagServer) ts;
    for (Integer i = 0; i < valueOf(numServers); i = i + 1)
       ts[i] = (interface TagServer;
-                  interface reqTag = toGet(reqTagQs[i]);
-                  interface retTag = toPut(retTagQs[i]);
+                  interface Server reqTag;
+                     interface Put request = toPut(reqQs[i]);
+                     interface Get response = toGet(respQs[i]);
+                  endinterface
+                  interface Put retTag = toPut(retTagQs[i]);
                endinterface);
    
    interface servers = ts;
    
    interface TagClient client;
+      interface Client reqTag;
+         interface Get request = toGet(reqQ);
+         interface Put response = toPut(respQ);
+      endinterface
       interface Get retTag = toGet(usedTagQ);
-      interface Put reqTag = toPut(newTagQ);
    endinterface
 
 endmodule

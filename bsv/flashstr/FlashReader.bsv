@@ -6,12 +6,14 @@ import TagAlloc::*;
 import Shifter::*;
 import MyArbiter::*;
 import Align::*;
+import SerDes::*;
 
 import FIFO::*;
 import FIFOF::*;
 import Vector::*;
 import GetPut::*;
 import BRAM::*;
+import RegFile::*;
 import ClientServer::*;
 import Connectable::*;
 
@@ -23,7 +25,8 @@ typedef struct{
    } ReadPipeT deriving (Bits, Eq);
 
 
-typedef Server#(FlashReadReqT, Tuple2#(Bit#(128), TagT)) FlashReaderServer;
+typedef Server#(FlashReadReqT, Tuple2#(Bit#(64), TagT)) FlashReaderServer;
+typedef Client#(FlashReadReqT, Tuple2#(Bit#(64), TagT)) FlashReaderClient;
 
 interface FlashReaderIFC;
    interface FlashReaderServer readServer;
@@ -34,12 +37,13 @@ endinterface
 
 module mkFlashReader#(FlashCtrlUser flash)(FlashReaderIFC);
    FIFO#(FlashReadReqT) reqQ <- mkFIFO();
-   Vector#(NUM_BUSES, FIFOF#(Tuple2#(Bit#(128), TagT))) respQs <- replicateM(mkFIFOF());
-   FIFO#(Tuple2#(Bit#(128), TagT)) respQ <- mkFIFO;
+   Vector#(NUM_BUSES, FIFOF#(Tuple2#(Bit#(64), TagT))) respQs <- replicateM(mkFIFOF());
+   FIFO#(Tuple2#(Bit#(64), TagT)) respQ <- mkFIFO;
    
    FIFO#(ReadPipeT) immQ <- mkSizedFIFO(valueOf(NumTags));
    
       
+   FIFO#(Bit#(32)) tagReqQ <- mkFIFO();
    FIFO#(TagT) freeTagQ <- mkFIFO();
    FIFO#(TagT) returnTagQ <- mkFIFO();
 
@@ -65,6 +69,7 @@ module mkFlashReader#(FlashCtrlUser flash)(FlashReaderIFC);
       
       if ( numPages == 1 ) begin
          immQ.enq(ReadPipeT{reqId: req.reqId, baseAddr: addr, numBytes: numBytes, numPages: truncate(numPages)});
+         tagReqQ.enq(extend(numPages));
       end
       else begin
          $display("Num of pages is out of bounds");
@@ -72,8 +77,11 @@ module mkFlashReader#(FlashCtrlUser flash)(FlashReaderIFC);
    endrule
       
    
-   BRAM_Configure cfg = defaultValue;
-   BRAM2Port#(TagT, Tuple4#(TagT, BusT, PageOffsetT, ValSizeT)) tag2reqIdTable <- mkBRAM2Server(cfg);
+   //BRAM_Configure cfg = defaultValue;
+   //BRAM2Port#(TagT, Tuple4#(TagT, BusT, PageOffsetT, ValSizeT)) tag2reqIdTable <- mkBRAM2Server(cfg);
+   
+   RegFile#(TagT, Tuple4#(TagT, BusT, PageOffsetT, ValSizeT)) tag2reqIdTable <- mkRegFileFull;
+    
    
 
    Reg#(Bit#(32)) cmdCnt <- mkReg(0);
@@ -92,22 +100,23 @@ module mkFlashReader#(FlashCtrlUser flash)(FlashReaderIFC);
          cmdCnt <= cmdCnt + 1;
       end
 
-      $display("doFlashCmd cmdCnt = %d, numPages = %d", cmdCnt, numPages);      
+      //$display("doFlashCmd cmdCnt = %d, numPages = %d", cmdCnt, numPages);      
       RawFlashAddrT addr = unpack(truncateLSB(pack(v.baseAddr)) + truncate(cmdCnt));
    
       flash.sendCmd(FlashCmd{tag: nextTag, op: READ_PAGE, bus: addr.channel, chip: addr.way, block: extend(addr.block), page: extend(addr.page)});
       
-      tag2reqIdTable.portA.request.put(BRAMRequest{write: True,
-                                                   responseOnWrite: False,
-                                                   address: nextTag,
-                                                   datain: tuple4(v.reqId, addr.channel, truncate(pack(v.baseAddr)), v.numBytes)});
+      //tag2reqIdTable.portA.request.put(BRAMRequest{write: True,
+      //                                             responseOnWrite: False,
+      //                                             address: nextTag,
+      //                                             datain: tuple4(v.reqId, addr.channel, truncate(pack(v.baseAddr)), v.numBytes)});
+      tag2reqIdTable.upd(nextTag, tuple4(v.reqId, addr.channel, truncate(pack(v.baseAddr)), v.numBytes));
       
    endrule
 
-   FIFO#(Tuple2#(Bit#(128), TagT)) immDtaQ <- mkFIFO;
+   //FIFO#(Tuple2#(Bit#(128), TagT)) immDtaQ <- mkFIFO;
    Vector#(NUM_BUSES,FIFO#(Tuple2#(Bit#(128), TagT))) dataQs <- replicateM(mkFIFO());
    
-  
+  /*
    rule doFlashRead;
       let v <- flash.readWord();
       let tag = tpl_2(v);
@@ -119,13 +128,19 @@ module mkFlashReader#(FlashCtrlUser flash)(FlashReaderIFC);
                                                    datain: ?});
       
    endrule
-   
+   */
    //tuple3 = {reqId, numBytes, offset}
    Vector#(NUM_BUSES,FIFO#(Tuple3#(TagT, ValSizeT, PageOffsetT))) cmdQs <- replicateM(mkFIFO);
    Vector#(NUM_BUSES, Reg#(Bit#(TLog#(PageSizeUser)))) pgByteCnts <- replicateM(mkReg(0));
    rule doDistributeData;
-      let v <- tag2reqIdTable.portB.response.get();
-      let data <- toGet(immDtaQ).get();
+      //let v <- tag2reqIdTable.portB.response.get();
+      
+      let data <- flash.readWord();
+      let tag = tpl_2(data);
+      
+      let v = tag2reqIdTable.sub(tag);
+      
+      //let data <- toGet(immDtaQ).get();
       let reqId = tpl_1(v);
       let channel = tpl_2(v);
       let pgOffset = tpl_3(v);
@@ -200,7 +215,7 @@ module mkFlashReader#(FlashCtrlUser flash)(FlashReaderIFC);
          
          //$display("wordCnt_page == %d, wordCnt_resp = %d, numWords = %d", wordCnt_page, wordCnt_resp, numWords);
          if ( wordCnt_page >= wordIdx ) begin
-            if (wordCnt_resp >= numWords && wordCnt_page + 1 == 0) begin
+            if ( wordCnt_page + 1 == 0) begin
                wordCnt_resp <= 0;
             end
             else if (wordCnt_resp < numWords) begin
@@ -214,13 +229,35 @@ module mkFlashReader#(FlashCtrlUser flash)(FlashReaderIFC);
          end
       endrule
       
-      rule doConn;
+      /*rule doConn;
          let v <- byteAlign.outPipe.get();
          respQs[i].enq(tuple2(tpl_1(v), tpl_3(v)));
       endrule
+      */
+      
+      //TODO:: delete 128 to 64 conversion
+      
+      SerializerIfc#(128, 64, TagT) ser <- mkSerializer();
+      rule doSer;
+         let v <- byteAlign.outPipe.get();
+         let data = tpl_1(v);
+         let numBytes = tpl_2(v);
+         let tag = tpl_3(v);
+         
+         //$display("FlashReader data = %h, numBytes = %d, tag = %d", data, numBytes, tag);
+         if ( numBytes <= 8 )
+            ser.marshall(data, 1, tag);
+         else
+            ser.marshall(data, 2, tag);
+      endrule
+      
+      rule doConn;
+         let v <- ser.getVal;
+         respQs[i].enq(v);
+      endrule
    end
 
-   Arbiter_IFC#(NUM_BUSES) arbiter <- mkArbiter(False);
+   Arbiter_IFC#(NUM_BUSES) arbiter <- mkArbiter(True);
 
    for (Integer i = 0; i < valueOf(NUM_BUSES); i = i + 1) begin
       rule doReqs_0 if (respQs[i].notEmpty);
@@ -240,7 +277,10 @@ module mkFlashReader#(FlashCtrlUser flash)(FlashReaderIFC);
    endinterface   
    
    interface TagClient tagClient;
+      interface Client reqTag;
+         interface Get request = toGet(tagReqQ);
+         interface Put response = toPut(freeTagQ);
+      endinterface
       interface Get retTag = toGet(returnTagQ);
-      interface Put reqTag = toPut(freeTagQ);
    endinterface
 endmodule

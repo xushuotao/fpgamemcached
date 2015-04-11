@@ -11,12 +11,14 @@ import Vector::*;
 import GetPut::*;
 import Connectable::*;
 import BRAM::*;
+import RegFile::*;
 
 /*interface EvictionBufFlushRawIFC;
    interface Put#(FlushReqT) flushReq;
    interface Get#(Bit#(1)) flushAck;
 endinterface*/
 typedef Server#(FlushReqT, Bit#(1)) FlushServer;
+typedef Client#(FlushReqT, Bit#(1)) FlushClient;
 
 interface EvictionBufFlushIFC;
    interface FlushServer flushServer;
@@ -31,10 +33,12 @@ module mkEvictionBufFlush#(FlashCtrlUser flash)(EvictionBufFlushIFC);
    Vector#(2,FIFO#(Bit#(512))) dramDtaQs <- replicateM(mkFIFO);
 
       
-   BRAM_Configure cfg = defaultValue;
-   BRAM2Port#(TagT, Bit#(TLog#(SuperPageSz))) tag2addrTable <- mkBRAM2Server(cfg);
+   /*BRAM_Configure cfg = defaultValue;
+   BRAM2Port#(TagT, Bit#(TLog#(SuperPageSz))) tag2addrTable <- mkBRAM2Server(cfg);*/
+   RegFile#(TagT, Bit#(TLog#(SuperPageSz))) tag2addrTable <- mkRegFileFull;
+
    
-   
+   FIFO#(Bit#(32)) tagReqQ <- mkFIFO();
    FIFO#(TagT) freeTagQ <- mkFIFO();
    FIFO#(TagT) returnTagQ <- mkFIFO();
    
@@ -52,6 +56,7 @@ module mkEvictionBufFlush#(FlashCtrlUser flash)(EvictionBufFlushIFC);
       bufIdQ_dramReq.enq(req.bufId);
       bufIdQ_dramResp.enq(req.bufId);
       preRespQ.enq(req.bufId);
+      tagReqQ.enq(fromInteger(valueOf(NumPagesPerSuperPage)));
    endrule
       
    
@@ -79,11 +84,12 @@ module mkEvictionBufFlush#(FlashCtrlUser flash)(EvictionBufFlushIFC);
   
       byteCnt_flash <= byteCnt_flash + fromInteger(pageSz);
       
-      tag2addrTable.portA.request.put(BRAMRequest{write: True,
+      /*tag2addrTable.portA.request.put(BRAMRequest{write: True,
                                                   responseOnWrite: False,
                                                   address: newTag,
                                                   datain: byteCnt_flash
-                                                  });
+                                                  });*/
+      tag2addrTable.upd(newTag, byteCnt_flash);
             
       //$display("FlushWriter send cmd: tag = %d, bus = %d, chip = %d, block = %d, page = %d", newTag, addr.channel, addr.way, addr.block, addr.page);
       flash.sendCmd(FlashCmd{tag: newTag, op: WRITE_PAGE, bus: addr.channel, chip: addr.way, block: extend(addr.block), page: extend(addr.page)});
@@ -93,13 +99,17 @@ module mkEvictionBufFlush#(FlashCtrlUser flash)(EvictionBufFlushIFC);
    
    //FIFO#(TagT) tagQ_cmd <- mkSizedFIFO(valueOf(NumTags));
    FIFO#(TagT) tagQ_dta <- mkSizedFIFO(valueOf(NumTags));
+   FIFO#(Bit#(TLog#(SuperPageSz))) dramAddrQ <- mkSizedFIFO(valueOf(NumTags));
+   //mkConnection(toPut(dramAddrQ), tag2addrTable.portB.response);
+   
    rule writeTags;
       let tag <- flash.writeDataReq();
-      tag2addrTable.portB.request.put(BRAMRequest{write: False,
+      /*tag2addrTable.portB.request.put(BRAMRequest{write: False,
                                                   responseOnWrite: False,
                                                   address: tag,
                                                   datain: ?
-                                                  });
+                                                  });*/
+      dramAddrQ.enq(tag2addrTable.sub(tag));
       //tagQ_cmd.enq(tag);
       tagQ_dta.enq(tag);
       $display("writeTag Ack: tag = %d", tag);
@@ -107,8 +117,6 @@ module mkEvictionBufFlush#(FlashCtrlUser flash)(EvictionBufFlushIFC);
 
    Reg#(Bit#(TLog#(SuperPageSz))) byteCnt_dram <- mkReg(0);
    //Reg#(Bit#(TLog#(PageSz))) byteCnt_page <- mkReg(0);
-   FIFO#(Bit#(TLog#(SuperPageSz))) dramAddrQ <- mkSizedFIFO(valueOf(NumTags));
-   mkConnection(toPut(dramAddrQ), tag2addrTable.portB.response);
    
    rule doFlashWriteReq;
       let bufId = bufIdQ_dramReq.first();
@@ -139,12 +147,12 @@ module mkEvictionBufFlush#(FlashCtrlUser flash)(EvictionBufFlushIFC);
       
    endrule
    
-   SerializerIfc#(512, 128) des <- mkSerializer();
+   SerializerIfc#(512, 128, Bit#(0)) des <- mkSerializer();
    Reg#(Bit#(TLog#(SuperPageSz))) byteCnt_resp <- mkReg(0);
    rule doReadResp;
       let bufId = bufIdQ_dramResp.first();
       let d <- toGet(dramDtaQs[bufId]).get();
-      des.marshall(d, 4);
+      des.marshall(d, 4, ?);
       byteCnt_resp <= byteCnt_resp + 64;
       if (byteCnt_resp + 64 == 0)
          bufIdQ_dramResp.deq();
@@ -165,7 +173,7 @@ module mkEvictionBufFlush#(FlashCtrlUser flash)(EvictionBufFlushIFC);
       
       if (byteCnt_RdResp < fromInteger(pageSz) ) begin
          let d <- des.getVal;
-         flash.writeWord(tuple2(d, tag));
+         flash.writeWord(tuple2(tpl_1(d), tag));
       end
       else begin
          flash.writeWord(tuple2(0, tag));
@@ -212,8 +220,11 @@ module mkEvictionBufFlush#(FlashCtrlUser flash)(EvictionBufFlushIFC);
    interface dramClients = ds;
    
    interface TagClient tagClient;
+      interface Client reqTag;
+         interface Get request = toGet(tagReqQ);
+         interface Put response = toPut(freeTagQ);
+      endinterface
       interface Get retTag = toGet(returnTagQ);
-      interface Put reqTag = toPut(freeTagQ);
    endinterface
 
    
