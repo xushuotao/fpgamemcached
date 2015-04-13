@@ -58,7 +58,7 @@ module mkFlashWriteBuffer(FlashWriteBufIfc);
    
    /* processing write commands */
    //FIFO#(ValSizeT) writeReqQ <- mkFIFO;
-   FIFO#(WriteBufCmdT) reqQ <- mkFIFO;
+   FIFO#(WriteBufCmdT) reqQ <- mkSizedFIFO(valueOf(NumTags));
    FIFO#(WriteBufCmdT) dramReqQ <- mkFIFO;
    
    FIFO#(Bit#(512)) inDataQ <- mkFIFO;
@@ -112,7 +112,7 @@ module mkFlashWriteBuffer(FlashWriteBufIfc);
          byteCnt_seg_V[bufIdx] <= byteCnt_seg_V[bufIdx] + extend(numBytes);
          dramReqQ.enq(req);
          reqQ.deq();
-         $display("WrAck addr = %d", {superPageId, byteCnt_seg});
+         //$display("WrAck addr = %d", {superPageId, byteCnt_seg});
          respQ.enq(unpack({superPageId, byteCnt_seg}));
       end
    endrule
@@ -167,9 +167,10 @@ module mkFlashWriteBuffer(FlashWriteBufIfc);
       readCmdLUT.upd(reqId, numBytes);
       
       SuperPageIndT currSegId = truncateLSB(pack(addr));
-      $display("currSegId = %d, superPageCnt = %d, currBuf = %d", currSegId, superPageCnt, currBuf);
+      //$display("currSegId = %d, superPageCnt = %d, currBuf = %d", currSegId, superPageCnt, currBuf);
       if (currSegId == superPageCnt) begin
          // do dram Read
+         $display("Serve Flash Read commmand from DRAM reqId = %d", reqId);
          req.bufId = currBuf;
          dramReqQ.enq(req);
          //reqQ.deq();
@@ -178,6 +179,7 @@ module mkFlashWriteBuffer(FlashWriteBufIfc);
       end
       else if (currSegId == superPageCnt - 1 && clean[~currBuf]) begin
          // do dram Read
+         $display("Serve Flash Read commmand from DRAM reqId = %d", reqId);
          req.bufId = ~currBuf;
          dramReqQ.enq(req);
          //reqQ.deq();
@@ -256,7 +258,7 @@ module mkFlashWriteBuffer(FlashWriteBufIfc);
    
    
    
-   Vector#(2, FIFO#(Tuple2#(Bit#(64), TagT))) respDtaQs <- replicateM(mkFIFO);
+   Vector#(2, FIFOF#(Tuple2#(Bit#(64), TagT))) respDtaQs <- replicateM(mkFIFOF);
    FIFO#(Tuple2#(Bit#(64), TagT)) respDtaQ <- mkFIFO;
    
    Vector#(2, FIFOF#(ValSizeT)) respSizeQs <- replicateM(mkFIFOF);
@@ -267,7 +269,7 @@ module mkFlashWriteBuffer(FlashWriteBufIfc);
       let d <- ser.getVal;
       respDtaQs[0].enq(d);
       
-      let reqId = tpl_2(d);
+      /*let reqId = tpl_2(d);
       
       if ( byteCnt_dramResp + 8 >= byteCntMax_dramResp) begin
          byteCnt_dramResp <= 0;
@@ -276,7 +278,7 @@ module mkFlashWriteBuffer(FlashWriteBufIfc);
       end
       else begin
          byteCnt_dramResp <= byteCnt_dramResp + 8;
-      end
+      end*/
    endrule
 
    Reg#(ValSizeT) byteCnt_flashResp <- mkReg(0);
@@ -286,7 +288,7 @@ module mkFlashWriteBuffer(FlashWriteBufIfc);
       let d <- toGet(flashRdRespQ).get();
       respDtaQs[1].enq(d);
       
-      let reqId = tpl_2(d);
+      /*let reqId = tpl_2(d);
       
       if ( byteCnt_flashResp + 8 >= byteCntMax_flashResp) begin
          byteCnt_flashResp <= 0;
@@ -295,12 +297,23 @@ module mkFlashWriteBuffer(FlashWriteBufIfc);
       end
       else begin
          byteCnt_flashResp <= byteCnt_flashResp + 8;
-      end
+      end*/
    endrule
    
    Arbiter_IFC#(2) arbiter <- mkArbiter(False);
-   FIFO#(Tuple2#(Bit#(1), ValSizeT)) respSizeQ <- mkFIFO;
-   
+   for (Integer i = 0; i < 2; i = i + 1) begin
+      rule doReqs_0 if (respDtaQs[i].notEmpty);
+         arbiter.clients[i].request;
+      endrule
+      
+      rule doReqs_1 if (arbiter.grant_id == fromInteger(i));
+         let v <- toGet(respDtaQs[i]).get();
+         respDtaQ.enq(v);
+      endrule
+   end
+
+   //FIFO#(Tuple2#(Bit#(1), ValSizeT)) respSizeQ <- mkFIFO;
+   /*
    for (Integer i = 0; i < 2; i = i + 1) begin
       rule doReqs_0 if (respSizeQs[i].notEmpty);
          arbiter.clients[i].request;
@@ -311,7 +324,7 @@ module mkFlashWriteBuffer(FlashWriteBufIfc);
          respSizeQ.enq(tuple2(fromInteger(i),v));
       endrule
    end
-
+   
    Reg#(ValSizeT) byteCnt_Resp <- mkReg(0);
  
    rule doResp;
@@ -330,7 +343,7 @@ module mkFlashWriteBuffer(FlashWriteBufIfc);
       //$display("dequeing data from sel = %d, data = %h, tag = %d", sel, tpl_1(data), tpl_2(data));
       respDtaQ.enq(data);
    endrule
-   
+   */
    
    Vector#(2,DRAMClient) dramClients;
    for (Integer i = 0; i < 2; i = i + 1)

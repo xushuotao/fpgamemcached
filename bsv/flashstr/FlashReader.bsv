@@ -36,7 +36,7 @@ endinterface
 
 
 module mkFlashReader#(FlashCtrlUser flash)(FlashReaderIFC);
-   FIFO#(FlashReadReqT) reqQ <- mkFIFO();
+   FIFO#(FlashReadReqT) reqQ <- mkSizedFIFO(valueOf(NumTags));
    Vector#(NUM_BUSES, FIFOF#(Tuple2#(Bit#(64), TagT))) respQs <- replicateM(mkFIFOF());
    FIFO#(Tuple2#(Bit#(64), TagT)) respQ <- mkFIFO;
    
