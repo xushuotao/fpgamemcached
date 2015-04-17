@@ -12,6 +12,7 @@
 #include "../jenkins_sw/jenkins_hash.h";
 
 #include <pthread.h>
+#include <iostream>
 
 pthread_mutex_t mu;
 pthread_cond_t wrAckCond;
@@ -57,8 +58,12 @@ int main(int argc, const char **argv)
     exit(1);
   }
 
+  int keylen;
+  std::cin >> keylen;
+  device->start(keylen);
 
-  srand(time(NULL));
+
+  /*srand(time(NULL));
   for ( int i = 1; i <= 256; i++) {
     size_t keylen = i;//64;//rand()%257;
     char* key = new char[keylen];
@@ -93,7 +98,8 @@ int main(int argc, const char **argv)
 
     delete key;
   }
-/*
+  */
+  /*
   uint32_t* k = (uint32_t*)key;
   TripleWord triple;
 
@@ -127,7 +133,7 @@ int main(int argc, const char **argv)
      */                                
 
                                      
-  /*  
+  
   fprintf(stderr, "Main::about to go to sleep\n");
-  while(true){sleep(2);}*/
+  while(true){sleep(2);}
 }

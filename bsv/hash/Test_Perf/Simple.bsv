@@ -90,47 +90,73 @@ typedef struct {
 
 module mkSimpleRequest#(SimpleIndication indication)(SimpleRequest);
    let jenkins <- mkJenkinsHash_128();
-   DeserializerIfc#(64, 128, Bit#(0)) des <- mkDeserializer;
    
-   rule process;
-      let retval <- jenkins.getHash();
-      indication.getHash(retval);
-   endrule
    Reg#(Bit#(32)) cntQ <- mkReg(0);
    FIFO#(Bit#(32)) keylenQ <- mkFIFO();
-   rule doDesCmd;
-      let keyMax = keylenQ.first();
-      if ( cntQ + 16 < keyMax ) begin
-         des.request(2, ?);
-         cntQ <= cntQ + 16;
+   
+   Integer keylen = 64;
+   
+   rule doJenkinsReq;
+      let cntMax = keylenQ.first();
+      if ( cntQ < cntMax ) begin
+         jenkins.start(fromInteger(keylen));
+         cntQ <= cntQ + 1;
       end
       else begin
-         cntQ <= 0;
          keylenQ.deq();
-         if ( keyMax - cntQ > 8 ) begin
-            des.request(2, ?);
-         end
-         else begin
-            des.request(1, ?);
-         end
+         cntQ <= 0;
       end
    endrule
    
-   rule doJenkins;
-      let v <- des.getVal();
-      jenkins.putKey(tpl_1(v));
+   Reg#(Bit#(32)) keyCnt <- mkReg(0);
+   Reg#(Bit#(32)) numReqs <- mkReg(0);
+   FIFO#(Bit#(32)) reqQ <- mkFIFO();
+   rule doJenkins if (numReqs < reqQ.first);
+      if ( keyCnt + 16 > fromInteger(keylen) ) begin
+         keyCnt <= 0;
+         numReqs <= numReqs + 1;
+      end
+      else begin
+         keyCnt <= keyCnt + 16;
+      end
+      jenkins.putKey(128'hdeadbeefdeadbeefdeadbeefdeadbeef);
    endrule
                
       
+   Reg#(Bit#(32)) respCnt <- mkReg(0);
+   
+   Reg#(Bit#(32)) cycleCnt <- mkReg(0);
+   
+   Reg#(Bool) started <- mkReg(False);
+   
+   rule doIncr if ( started);
+      cycleCnt <= cycleCnt + 1;
+   endrule
+   
+   rule getVal;
+      if (respCnt + 1 == reqQ.first) begin
+         respCnt <= 0;
+         reqQ.deq();
+         $display("finish in %d cycles", cycleCnt);
+      end
+      else begin
+         respCnt <= respCnt + 1;
+      end
+      
+      let v <- jenkins.getHash();
+   endrule
+      
    
    method Action start(Bit#(32) keylen);
-      jenkins.start(keylen);
+      //jenkins.start(keylen);
       keylenQ.enq(keylen);
+      reqQ.enq(keylen);
+      started <= True;
    endmethod
    
    method Action key(Bit#(64) k);
       //jenkins.putKey(k);
-      des.demarshall.put(k);
+      //des.demarshall.put(k);
    endmethod
    /*
    method Action key(TripleWord k);
