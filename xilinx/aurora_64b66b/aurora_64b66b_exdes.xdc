@@ -70,7 +70,7 @@
 	set_property LOC K8 [get_ports aurora_quad117_gtx_clk_p_v]
 	set_property LOC K7 [get_ports aurora_quad117_gtx_clk_n_v]
 
-	create_clock -name TS_init_clk_i -period 8.0 [get_pins host_ep7/CLK_epClock125]
+	#create_clock -name TS_init_clk_i -period 8.0 [get_pins host_ep7/CLK_epClock125]
 
 	set_false_path -from [get_cells -hier -filter {NAME =~ */*auroraExt*/rst50/*}]
 
@@ -86,8 +86,10 @@
 	create_clock -name TS_user_clk_i_all -period 6.400	 [get_pins -hier -filter {NAME =~ *aurora_64b66b_block_i/clock_module_i/user_clk_net_i/O}]
 	create_clock -name TS_sync_clk_i_all -period 3.200	 [get_pins -hier -filter {NAME =~ *aurora_64b66b_block_i/clock_module_i/sync_clock_net_i/O}]
 	
-	set_max_delay -from [get_clocks TS_init_clk_i] -to [get_clocks TS_user_clk_i_all] -datapath_only 8.1
-	set_max_delay -from [get_clocks TS_user_clk_i_all] -to [get_clocks TS_init_clk_i] -datapath_only 8.1
+	#set_max_delay -from [get_clocks TS_init_clk_i] -to [get_clocks TS_user_clk_i_all] -datapath_only 8.1
+	#set_max_delay -from [get_clocks TS_user_clk_i_all] -to [get_clocks TS_init_clk_i] -datapath_only 8.1
+        set_max_delay -from [get_clocks clk_125mhz] -to [get_clocks TS_user_clk_i_all] -datapath_only 8.1
+        set_max_delay -from [get_clocks TS_user_clk_i_all] -to [get_clocks clk_125mhz] -datapath_only 8.1
 
 ######################################## Quad 119
 ################ 24
@@ -220,9 +222,11 @@
  set_property LOC J5 [get_ports { aurora_ext_7_rxn_i }]
 
 
-set_clock_groups -asynchronous -group {TS_init_clk_i} -group {TS_user_clk_i_all}
+#set_clock_groups -asynchronous -group {TS_init_clk_i} -group {TS_user_clk_i_all}
 #set_clock_groups -asynchronous -group {TS_init_clk_i} -group {TS_user_clk_i_16}
 #set_clock_groups -asynchronous -group {TS_init_clk_i} -group {app_clk}
 set_clock_groups -asynchronous -group {aurora_init_clk_i} -group {TS_user_clk_i_all}
 #set_clock_groups -asynchronous -group {aurora_init_clk_i} -group {TS_user_clk_i_24}
-#set_clock_groups -asynchronous -group {aurora_init_clk_i} -group {app_clk}
+
+#set_clock_groups -asynchronous -group {aurora_init_clk_i} -group {app_clk
+set_clock_groups -asynchronous -group {aurora_init_clk_i} -group {clk_125mhz}

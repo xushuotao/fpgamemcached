@@ -80,31 +80,32 @@ typedef enum {
    PROTOCOL_BINARY_CMD_RDECRQ    = 8'h3c,
    //   /* End Range operations */
 
-   PROTOCOL_BINARY_CMD_NOP = 8'hff
+   PROTOCOL_BINARY_CMD_EOM = 8'hff
    } Protocol_Binary_Command deriving (Eq,Bits);
 
 typedef struct {
-   Protocol_Binary_Magic magic;
-   Protocol_Binary_Command opcode;
-   Bit#(16) keylen;
-   Bit#(8)  extlen;
-   Bit#(8) datatype;
-   Bit#(16) reserved;
-   Bit#(32) bodylen;
-   Bit#(32) opaque;
    Bit#(64) cas;
+   Bit#(32) opaque;
+   Bit#(32) bodylen;
+   Bit#(16) reserved;
+   Bit#(8) datatype;
+   Bit#(8)  extlen;
+   Bit#(16) keylen;
+   Protocol_Binary_Command opcode;
+   Protocol_Binary_Magic magic;
    } Protocol_Binary_Request_Header deriving (Eq, Bits);
 
+
 typedef struct {
-   Protocol_Binary_Magic magic;
-   Protocol_Binary_Command opcode;
-   Bit#(16) keylen;
-   Bit#(8) extlen;
-   Bit#(8) datatype;
-   Protocol_Binary_Response_Status status;
-   Bit#(32) bodylen;
-   Bit#(32) opaque;
    Bit#(64) cas;
+   Bit#(32) opaque;
+   Bit#(32) bodylen;
+   Protocol_Binary_Response_Status status;
+   Bit#(8) datatype;
+   Bit#(8) extlen;
+   Bit#(16) keylen;
+   Protocol_Binary_Command opcode;
+   Protocol_Binary_Magic magic;
    }Protocol_Binary_Response_Header deriving (Eq, Bits);
 
 

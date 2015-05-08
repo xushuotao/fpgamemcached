@@ -1,4 +1,4 @@
-OB######################################################################################################
+######################################################################################################
 ##  DDR3 Constraints
 ######################################################################################################
 
@@ -835,8 +835,9 @@ create_generated_clock -name ddr3_usrclk -source [get_pins host_sys_clk_200mhz_b
 #set_max_delay -from [get_clocks app_clk] -to [get_clocks ddr3_usrclk] 5.000 -datapath_only
 #set_max_delay -from [get_clocks ddr3_usrclk] -to [get_clocks app_clk] 5.000 -datapath_only
 
-set_max_delay -from [get_clocks clk_125mhz] -to [get_clocks ddr3_usrclk] 5.000 -datapath_only
-set_max_delay -from [get_clocks ddr3_usrclk] -to [get_clocks clk_125mhz] 5.000 -datapath_only
+#set_max_delay -from [get_clocks clk_125mhz] -to [get_clocks ddr3_usrclk] 5.000 -datapath_only
+#set_max_delay -from [get_clocks ddr3_usrclk] -to [get_clocks clk_125mhz] 5.000 -datapath_only
+set_clock_groups -asynchronous -group {clk_125mhz} -group {ddr3_usrclk}
 
 #set_clock_groups -asynchronous -group {app_clk} -group {ddr3_refclk}
 set_clock_groups -asynchronous -group {clk_125mhz} -group {ddr3_refclk}

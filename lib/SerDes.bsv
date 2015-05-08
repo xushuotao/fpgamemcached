@@ -67,7 +67,8 @@ endmodule
 
 module mkDeserializer(DeserializerIfc#(inputSz, outputSz, tag_type))
    provisos(Add#(a__, inputSz, outputSz),
-            Bits#(tag_type, b__));
+            Bits#(tag_type, b__),
+            Add#(1, d__, outputSz));
    FIFOF#(Tuple2#(Bit#(LgNOutputs#(outputSz, inputSz)), tag_type)) cntMaxQ <- mkFIFOF;
    FIFO#(Bit#(inputSz)) inputFIFO <- mkFIFO;
    

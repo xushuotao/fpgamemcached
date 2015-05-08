@@ -16,3 +16,4 @@ function Server#(req_type, resp_type) toServer(FIFO#(req_type) reqQ, FIFO#(resp_
               interface Get response = toGet(respQ);
            endinterface);
 endfunction
+

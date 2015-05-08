@@ -51,7 +51,8 @@
 ################################################################################
 ## XDC generated for xc7vx485t-ffg1761-2 device
 # 275.0MHz GT Reference clock constraint
-create_clock -name GT_REFCLK1 -period 3.636	 [get_pins */fmc1_gtx_clk_i/O]
+create_clock -name GT_REFCLK1 -period 3.636	 [get_pins -hier -filter {NAME =~ */fmc1_gtx_clk_i/O}]
+
 ####################### GT reference clock LOC #######################
 set_property LOC E9 [get_ports aurora_clk_fmc1_gtx_clk_n_v]
 set_property LOC E10 [get_ports aurora_clk_fmc1_gtx_clk_p_v]
@@ -59,25 +60,47 @@ set_property LOC E10 [get_ports aurora_clk_fmc1_gtx_clk_p_v]
 #create_clock -name tx_out_clk_i -period 9.091	 [get_pins aurora_module_i/aurora_8b10b_fmc1_i/inst/gt_wrapper_i/aurora_8b10b_fmc1_multi_gt_i/gt0_aurora_8b10b_fmc1_i/gtxe2_i/TXOUTCLK]
 # USER_CLK Constraint : Value is selected based on the line rate (4.4 Gbps) and lane width (4-Byte)
 
-create_clock -name user_clk_i -period 9.091	 [get_pins portalTop_hwmain_auroraIntra1/auroraIntraImport1/aurora_module_i/clock_module_i/user_clk_buf_i/O]
+create_clock -name auroraI_user_clk_i -period 9.091	 [get_pins -hierarchical -regexp {.*/aurora_module_i/clock_module_i/user_clk_buf_i/O}]
+
 # 20.0 ns period Board Clock Constraint 
 #create_clock -name init_clk_i -period 20.0 [get_pins */auroraIntraImport1/aurora_module_i/clock_module_i/init_clk_ibufg_i/O]
-create_clock -name init_clk_i -period 20.0 [get_pins */auroraIntraClockDiv4_slowbuf/O]
+create_clock -name auroraI_init_clk_i -period 20.0 [get_pins -hierarchical -regexp {.*/auroraIntraClockDiv4_slowbuf/O}]
 # 20.0 ns period DRP Clock Constraint 
-#TODO #create_clock -name drp_clk_i -period 20.0 [get_ports DRP_CLK_IN]
-create_clock -name drp_clk_i -period 20.0 [get_pins */auroraIntraClockDiv4_slowbuf/O] -add
+create_clock -name auroraI_drp_clk_i -period 20.0 [get_pins -hierarchical -regexp {.*/auroraIntraClockDiv4_slowbuf/O}] -add
 
 ###### CDC in RESET_LOGIC from INIT_CLK to USER_CLK ##############
-set_max_delay -from [get_clocks init_clk_i] -to [get_clocks user_clk_i] -datapath_only 9.091	 
+set_max_delay -from [get_clocks auroraI_init_clk_i] -to [get_clocks auroraI_user_clk_i] -datapath_only 9.091	 
+
+#CDC from auroraI_user_clk_i to/from clkgen_pll_CLKOUT0 (125mhz system clk)
+#Warning: The following constraints must be sourced AFTER vc707.xdc!
+set_max_delay -from [get_clocks clk_125mhz]] -to [get_clocks auroraI_user_clk_i] -datapath_only 8.0
+set_max_delay -from [get_clocks auroraI_user_clk_i] -to [get_clocks clk_125mhz]] -datapath_only 8.0
 
 
+#CDC from auroraIntra clocks to/from clkgen_pll_CLKOUT0 (125mhz system clk)
+set_max_delay -from [get_clocks clk_125mhz] -to [get_clocks auroraI_user_clk_i] -datapath_only 8.0
+set_max_delay -from [get_clocks auroraI_user_clk_i] -to [get_clocks clk_125mhz] -datapath_only 8.0
+set_max_delay -from [get_clocks clk_125mhz] -to [get_clocks auroraI_drp_clk_i] -datapath_only 8.0
+set_max_delay -from [get_clocks auroraI_drp_clk_i] -to [get_clocks clk_125mhz] -datapath_only 8.0
+set_max_delay -from [get_clocks clk_125mhz] -to [get_clocks auroraI_init_clk_i] -datapath_only 8.0
+set_max_delay -from [get_clocks auroraI_init_clk_i] -to [get_clocks clk_125mhz] -datapath_only 8.0
+
+
+
+#ML: Not sure when these constraints should be applied
+#set_false_path -from [get_cells -hier -filter {NAME =~ *auroraGearbox_sendQ/*/CLR}]
+#set_false_path -from [get_cells -hier -filter {NAME =~ *auroraGearbox_sendQ/*/PRE}]
+#set_false_path -from [get_cells -hier -filter {NAME =~ *auroraGearbox_recvQ/*/CLR}]
+#set_false_path -from [get_cells -hier -filter {NAME =~ *auroraGearbox_recvQ/*/PRE}]
 
 
 ############################### GT LOC ###################################
-set_property LOC GTXE2_CHANNEL_X1Y20 [get_cells portalTop_hwmain_auroraIntra1/auroraIntraImport1/aurora_module_i/aurora_8b10b_fmc1_i/inst/gt_wrapper_i/aurora_8b10b_fmc1_multi_gt_i/gt0_aurora_8b10b_fmc1_i/gtxe2_i]
-set_property LOC GTXE2_CHANNEL_X1Y21 [get_cells portalTop_hwmain_auroraIntra1/auroraIntraImport1/aurora_module_i/aurora_8b10b_fmc1_i/inst/gt_wrapper_i/aurora_8b10b_fmc1_multi_gt_i/gt1_aurora_8b10b_fmc1_i/gtxe2_i]
-set_property LOC GTXE2_CHANNEL_X1Y22 [get_cells portalTop_hwmain_auroraIntra1/auroraIntraImport1/aurora_module_i/aurora_8b10b_fmc1_i/inst/gt_wrapper_i/aurora_8b10b_fmc1_multi_gt_i/gt2_aurora_8b10b_fmc1_i/gtxe2_i]
-set_property LOC GTXE2_CHANNEL_X1Y23 [get_cells portalTop_hwmain_auroraIntra1/auroraIntraImport1/aurora_module_i/aurora_8b10b_fmc1_i/inst/gt_wrapper_i/aurora_8b10b_fmc1_multi_gt_i/gt3_aurora_8b10b_fmc1_i/gtxe2_i]
+#get_cells -hierarchical -regexp {.*aurora_8b10b_fmc1_i/inst/gt_wrapper_i/aurora_8b10b_fmc1_multi_gt_i/gt0_aurora_8b10b_fmc1_i/gtxe2_i}
+
+set_property LOC GTXE2_CHANNEL_X1Y20 [get_cells -hierarchical -regexp {.*aurora_8b10b_fmc1_i/inst/gt_wrapper_i/aurora_8b10b_fmc1_multi_gt_i/gt0_aurora_8b10b_fmc1_i/gtxe2_i}]
+set_property LOC GTXE2_CHANNEL_X1Y21 [get_cells -hierarchical -regexp {.*aurora_8b10b_fmc1_i/inst/gt_wrapper_i/aurora_8b10b_fmc1_multi_gt_i/gt1_aurora_8b10b_fmc1_i/gtxe2_i}]
+set_property LOC GTXE2_CHANNEL_X1Y22 [get_cells -hierarchical -regexp {.*aurora_8b10b_fmc1_i/inst/gt_wrapper_i/aurora_8b10b_fmc1_multi_gt_i/gt2_aurora_8b10b_fmc1_i/gtxe2_i}]
+set_property LOC GTXE2_CHANNEL_X1Y23 [get_cells -hierarchical -regexp {.*aurora_8b10b_fmc1_i/inst/gt_wrapper_i/aurora_8b10b_fmc1_multi_gt_i/gt3_aurora_8b10b_fmc1_i/gtxe2_i}]
 
   
  # X1Y20

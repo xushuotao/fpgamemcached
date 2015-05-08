@@ -6,14 +6,16 @@ import Vector::*;
 import GetPut::*;
 import ClientServer::*;
 
-import DRAMArbiterTypes::*;
+import DRAMCommon::*;
 import DRAMArbiter::*;
 
 import Time::*;
 
 import Connectable::*;
 
+import HashtableTypes::*;
 import ValDRAMCtrlTypes::*;
+import ValFlashCtrlTypes::*;
 
 import ParameterTypes::*;
 import SerDes::*;
@@ -28,11 +30,12 @@ interface DebugProbes_Val;
    method Bit#(64) debugWrDta;
 endinterface
 
+
 interface ValDRAMUser;
    method Action readReq(Bit#(64) startAddr, Bit#(64) nBytes);
    method ActionValue#(Bit#(64)) readVal();
    
-   method Action writeReq(Bit#(64) startAddr, Bit#(64) nBytes, Bit#(30) hv, Bit#(2) idx);
+   method Action writeReq(ValStrWriteReqT req);
    method Action writeVal(Bit#(64) wrVal);
 endinterface
 
@@ -42,6 +45,10 @@ interface ValDRAMCtrlIFC;
    interface ValDRAMUser user;
    
    interface DRAMClient dramClient;
+   
+   interface FlashWriteClient flashWriteClient;
+   
+   interface Get#(HeaderUpdateReqT) htableRequest;
 
    interface DebugProbes_Val debug;
    
@@ -52,20 +59,30 @@ typedef Bit#(ShftDtaSz) ShiftDta;
 typedef Bit#(WordSz) Word;
 typedef LgNOutputs#(ShftDtaSz, WordSz) SerDesArgSz;
 
-//(*synthesize*)
+
+(*synthesize*)
 module mkValDRAMCtrl(ValDRAMCtrlIFC);
+   
+   Integer evictOffset = valueOf(ByteOf#(Time_t));
+   Integer flashHeaderSz = valueOf(TSub#(BytesOf#(ValHeader),BytesOf#(Time_t)));
+   Integer valHeaderBytes = valueOf(BytesOf#(ValHeader));
+
    
    Clk_ifc real_time <- mkLogicClock;
    
    Reg#(ValAcc_State) state <- mkReg(ProcHeader);
    Reg#(Bool) rnw <- mkRegU();
-   
- 
-   
+      
    FIFO#(Word) readRespQ <- mkFIFO();
    
-   FIFO#(DRAMReq) dramCmdQ <- mkFIFO();
-   FIFO#(Bit#(512)) dramDataQ <- mkFIFO();
+   Vector#(2,FIFO#(DRAMReq)) dramCmdQs <- mkFIFO();
+   Vector#(2,FIFO#(Bit#(512))) dramDataQs <- mkFIFO();
+   
+   DRAMArbiterIfc#(2) dramArb <- mkDRAMArbiter;
+   
+   mkConnection(toClient(dramCmdQs[0], dramDataQs[0]), dramArb.dramServers[0]);
+   mkConnection(toClient(dramCmdQs[1], dramDataQs[1]), dramArb.dramServers[1]);
+   
    
    FIFO#(CmdType) cmdQ <- mkFIFO();
    FIFO#(CmdType) cmdQ_Rd <- mkFIFO();
@@ -74,33 +91,71 @@ module mkValDRAMCtrl(ValDRAMCtrlIFC);
 
    Reg#(Bit#(64)) reqCnt <- mkReg(0);
    
-   rule loadOldValue;
+   FIFO#(Tuple2#(Bit#(30), Bit#(2))) hdrUpdQ_pre <- mkFIFO();
+   FIFO#(HeaderUpdateReqT) hdrUpdQ <- mkFIFO();
+   
+  
+   ByteAlignIfc#(Bit#(512), Bit#(0)) align_evict <- mkByteAlignPipeline;
+   mkConnection(align_evict.inPipe, dramDataQs[1]);
+   
+   
+   FIFO#(ValSizeT) flashReqQ <- mkFIFO();
+   FIFO#(FlashReadType) flashRespQ <- mkFIFO();
+   
+   let flashWrCli = (interface FlashWriteClient;
+                        interface Client writeClient = toClient(flashReqQ, flashRespQ);
+                        interface Get writeWord = align_evict.outPipe;
+                     endinterface);
+   
+   rule doFlashResp;
+      let v <- toGet(hdrUpdQ_pre).get();
+      let addr <- toGet(flashRespQ).get();
+      hdrUpdQ.enq(HeaderUpdateReqT{hv: tpl_1(v), idx: tpl_2(v), flashAddr: addr});
    endrule
    
-   rule dumpOldValue;
-   endrule
 
    ByteDeAlignIfc#(Bit#(512), Bit#(0)) deAlign <- mkByteDeAlignPipeline();
    
-   rule updateHeader if (state == ProcHeader);
-      let cmd <- toGet(cmdQ).get();
+   Reg#(ValSizeT) byteCnt_Evict <- mkReg(0);
+   rule doHeader if (state == ProcHeader);
+      let cmd = cmdQ.first();
       if (cmd.rnw) begin
-         dramCmdQ.enq(DRAMReq{rnw:False, addr: cmd.currAddr, data:extend(pack(real_time.get_time)), numBytes:fromInteger(valueOf(TDiv#(SizeOf#(Time_t),8)))});
-      end
-      else begin
-         dramCmdQ.enq(DRAMReq{rnw:False, addr: cmd.currAddr, data:extend(pack(ValHeader{timestamp: real_time.get_time, hv: cmd.hv, idx: cmd.idx, nBytes: cmd.numBytes})), numBytes: fromInteger(valueOf(TDiv#(ValHeaderSz,8)))});
-      end
-     
-      cmd.currAddr = cmd.currAddr + fromInteger(valueOf(TDiv#(ValHeaderSz,8)));
-      if (cmd.rnw ) 
+         dramCmdQs[0].enq(DRAMReq{rnw:False, addr: cmd.currAddr, data:extend(pack(real_time.get_time)), numBytes:fromInteger(ByteOf(Time_t))});
+         cmdQ.deq();
+         cmd.currAddr = cmd.currAddr + fromInteger(valHeaderBytes);
          cmdQ_Rd.enq(cmd);
-      else begin
-         desCmdQ.enq(cmd);
-         cmdQ_Wr.enq(cmd);
-         deAlign.deAlign(cmd.byteOffset, cmd.numBytes,?);
+         state <= Proc;
       end
-     
-      state <= Proc;
+      else begin
+         if ( !cmd.doEvict || byteCnt_Evict >= cmd.old_nBytes + fromInteger()) begin
+            dramCmdQs[0].enq(DRAMReq{rnw:False, addr: cmd.currAddr, data:extend(pack(ValHeader{timestamp: real_time.get_time, hv: cmd.hv, idx: cmd.idx, nBytes: cmd.numBytes})), numBytes: fromInteger(valHeaderBytes)});
+            byteCnt_Evict <= 0;
+            cmd.currAddr = cmd.currAddr + fromInteger(valueHeaderBytes);
+            cmdQ.deq();
+            desCmdQ.enq(cmd);
+            cmdQ_Wr.enq(cmd);
+            deAlign.deAlign(cmd.byteOffset, cmd.numBytes,?);
+            state <= Proc;
+         end
+         else begin
+            let addr = cmd.currAddr + fromInteger(evictOffset) + extend(byteCnt_Evict);
+            let rowidx = addr >> 6;
+            $display("Valstr issuing read cmd: currAddr = %d", addr);
+            Bit#(7) nBytes = ?;
+
+            if (addr[5:0] == 0) begin
+               nBytes = 64;
+            end
+            else begin
+               nBytes = 64 - extend(addr[5:0]);
+            end
+            
+            dramCmdQs[1].enq(DRAMReq{rnw:True, addr: rowidx << 6, data:?, numBytes:nBytes});
+            $display("byteCnt_Evict = %d, byteIncr = %d, numBytes = %d", byteCnt_Evict, byteIncr, cmd.numBytes);
+            byteCnt_Evict <= byteCnt_Evict + extend(nBytes);            
+         end
+      end
+      
    endrule
 
    FIFO#(RespHandleType) respHandleQ <- mkSizedFIFO(numStages);
@@ -121,7 +176,7 @@ module mkValDRAMCtrl(ValDRAMCtrlIFC);
          nBytes = 64 - extend(cmd.byteOffset);
       end
       
-      dramCmdQ.enq(DRAMReq{rnw:True, addr: rowidx << 6, data:?, numBytes:nBytes});
+      dramCmdQs[0].enq(DRAMReq{rnw:True, addr: rowidx << 6, data:?, numBytes:nBytes});
       //$display("byteCnt_Rd = %d, byteIncr = %d, numBytes = %d", byteCnt_Rd, byteIncr, cmd.numBytes);
       if (byteCnt_Rd + extend(nBytes) < cmd.numBytes) begin
          byteCnt_Rd <= byteCnt_Rd + extend(nBytes);
@@ -136,7 +191,7 @@ module mkValDRAMCtrl(ValDRAMCtrlIFC);
    
    ByteAlignIfc#(Bit#(512), Bit#(0)) align <- mkByteAlignPipeline;
    
-   mkConnection(align.inPipe, toGet(dramDataQ));
+   mkConnection(align.inPipe, toGet(dramDataQs[0]));
    
    rule doAlignReadResp;
       let v <- toGet(respHandleQ).get();
@@ -198,7 +253,8 @@ module mkValDRAMCtrl(ValDRAMCtrlIFC);
       let v <- deAlign.outPipe.get();
       let data = tpl_1(v);
       let numBytes = tpl_2(v);
-      dramCmdQ.enq(DRAMReq{rnw: cmd.rnw, addr: addr, data: data, numBytes: numBytes});
+      $display("valuestr dram write, addr = %d, data = %h, numBytes = %d", addr, data, numBytes);
+      dramCmdQs[0].enq(DRAMReq{rnw: cmd.rnw, addr: addr, data: data, numBytes: numBytes});
       
       if ( byteCnt_wr + extend(numBytes) == cmd.numBytes) begin
          byteCnt_wr <= 0;
@@ -220,7 +276,7 @@ module mkValDRAMCtrl(ValDRAMCtrlIFC);
    interface ValDRAMUser user;
       
       method Action readReq(Bit#(64) startAddr, Bit#(64) nBytes);
-         //$display("Valuestr Get read req, startAddr = %d, nBytes = %d, reqId = %d", startAddr, nBytes, reqCnt);
+         $display("Valuestr Get read req, startAddr = %d, nBytes = %d, reqId = %d", startAddr, nBytes, reqCnt);
          Bit#(6) offset = truncate(startAddr + fromInteger(valueOf(TDiv#(ValHeaderSz,8))));
          cmdQ.enq(CmdType{currAddr: startAddr, numBytes:truncate(nBytes), rnw: True, byteOffset: offset});
 
@@ -234,13 +290,27 @@ module mkValDRAMCtrl(ValDRAMCtrlIFC);
          return d;
       endmethod
       
-      method Action writeReq(Bit#(64) startAddr, Bit#(64) nBytes, Bit#(30) hv, Bit#(2) idx);
-         //$display("Valuestr Get write req, startAddr = %d, nBytes = %d, reqId = %d", startAddr, nBytes, reqCnt);
+      method Action writeReq(ValStrWriteT req);
+         $display("Valuestr Get write req, startAddr = %d, nBytes = %d, reqId = %d", req.startAddr, req.nBytes, reqCnt);
          
-         Bit#(6) offset = truncate(startAddr + fromInteger(valueOf(TDiv#(ValHeaderSz,8))));
-         cmdQ.enq(CmdType{currAddr: startAddr, numBytes:truncate(nBytes), rnw: False, byteOffset: offset});
+         Bit#(6) offset = truncate(req.startAddr + fromInteger(valueOf(TDiv#(ValHeaderSz,8))));
+         cmdQ.enq(CmdType{currAddr: req.startAddr,
+                          numBytes:truncate(req.nBytes),
+                          rnw: False,
+                          byteOffset: offset,
+                          hv:req.hv,
+                          idx:req.idx,
+                          doEvict: req.doEvict,
+                          old_nBytes: req.old_nBytes});
+   
+         if (req.doEvict) begin
+            flashReqQ.enq(req.old_nBytes);
+            align_evict.align(req.startAddr+ fromInteger(valueOf(ByteOf(Time_t))), req.old_nBytes)
+            hdrUpdQ_pre.enq(tuple2(req.old_hv, req.old_idx));
+         end
+            
          reqCnt <= reqCnt + 1;
-         wrReq <= BurstReq{addr: startAddr, nBytes: nBytes};
+         wrReq <= BurstReq{addr: req.startAddr, nBytes: req.nBytes};
       endmethod
       
       method Action writeVal(Bit#(64) wrVal); 
@@ -250,11 +320,11 @@ module mkValDRAMCtrl(ValDRAMCtrlIFC);
    
    endinterface
       
-   interface DRAMClient dramClient;
-      interface Get request = toGet(dramCmdQ);
-      interface Put response = toPut(dramDataQ);
-   endinterface
-
+   interface DRAMClient dramClient = dramArb.dramClient;
+   
+   interface FlashWriteClient flashWriteClient = flashWrCli;
+   
+   interface Get htableRequest = toGet(hdrUpdQ);
          
    interface DebugProbes_Val debug;
       method BurstReq debugRdReq;

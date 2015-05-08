@@ -2,6 +2,7 @@ package Shifter;
 
 import GetPut::*;
 import FIFO::*;
+import BRAMFIFO::*;
 import SpecialFIFOs::*;
 import Vector::*;
 
@@ -28,49 +29,67 @@ typedef ByteShiftIfc#(element_type, ElementShiftSz#(element_type)) ByteSftIfc#(t
 
 module mkCombinationalRightShifter(ByteShiftIfc#(element_type, size))
    provisos(Bits#(element_type, a__),
-            Bitwise#(element_type));
+            Bitwise#(element_type),
+            Add#(1, b__, a__));
    
-   FIFO#(Tuple2#(element_type, Bit#(size))) inputFifo <- mkFIFO;
-   FIFO#(element_type) outputFifo <- mkBypassFIFO;
+   FIFO#(element_type) inputFifo;
+   FIFO#(Bit#(size)) inputFifo_sft <- mkFIFO;
+   //if ( fromInteger(valueOf(SizeOf#(element_type))) > 512 ) 
+   //inputFifo <- mkSizedFIFO(1);
+//else
+      inputFifo <- mkFIFO;
    
-   rule doRotation;
-      let v <- toGet(inputFifo).get();
-      let data = tpl_1(v);
-      let shft = tpl_2(v);
+   //FIFO#(element_type) outputFifo <- mkBypassFIFO;
+   
+   /*rule doRotation;
+      let data <- toGet(inputFifo).get();
+      let shft <- toGet(inputFifo_sft).get();
       outputFifo.enq(data >> {shft, 3'b0});
-   endrule
+   endrule*/
    
    method Action rotateByteBy(element_type v, Bit#(size) shift);
       //$display("inputVal = %h, shift = %d", v, shift);
-      inputFifo.enq(tuple2(v,shift));
+      inputFifo.enq(v);
+      inputFifo_sft.enq(shift);
    endmethod
    method ActionValue#(element_type) getVal;
-      let v <- toGet(outputFifo).get();
-      return v;
+      let data <- toGet(inputFifo).get();
+      let shft <- toGet(inputFifo_sft).get();
+      return data >> {shft, 3'b0};
    endmethod
 endmodule
 
 module mkCombinationalLeftShifter(ByteShiftIfc#(element_type, size))
    provisos(Bits#(element_type, a__),
-            Bitwise#(element_type));
+            Bitwise#(element_type),
+            Add#(1, b__, a__));
    
-   FIFO#(Tuple2#(element_type, Bit#(size))) inputFifo <- mkFIFO;
-   FIFO#(element_type) outputFifo <- mkBypassFIFO;
    
+   //FIFO#(Tuple2#(element_type, Bit#(size))) inputFifo;
+   FIFO#(element_type) inputFifo;
+   FIFO#(Bit#(size)) inputFifo_sft <- mkFIFO;
+   //if ( fromInteger(valueOf(SizeOf#(element_type))) > 512 ) 
+   //   inputFifo <- mkSizedFIFO(1);
+   //else
+      inputFifo <- mkFIFO;
+   
+   //FIFO#(element_type) outputFifo <- mkBypassFIFO;
+   /*
    rule doRotation;
-      let v <- toGet(inputFifo).get();
-      let data = tpl_1(v);
-      let shft = tpl_2(v);
+      let data <- toGet(inputFifo).get();
+      let shft <- toGet(inputFifo_sft).get();
       outputFifo.enq(data << {shft, 3'b0});
    endrule
-   
+   */
    method Action rotateByteBy(element_type v, Bit#(size) shift);
       //$display("inputVal = %h, shift = %d", v, shift);
-      inputFifo.enq(tuple2(v,shift));
+      inputFifo.enq(v);
+      inputFifo_sft.enq(shift);
    endmethod
    method ActionValue#(element_type) getVal;
-      let v <- toGet(outputFifo).get();
-      return v;
+      let data <- toGet(inputFifo).get();
+      let shft <- toGet(inputFifo_sft).get();
+      return data << {shft, 3'b0};
    endmethod
 endmodule
 

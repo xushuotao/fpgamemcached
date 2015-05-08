@@ -6,7 +6,7 @@ import Vector::*;
 import GetPut::*;
 import ClientServer::*;
 
-import DRAMArbiterTypes::*;
+import DRAMCommon::*;
 import DRAMArbiter::*;
 
 import Time::*;

@@ -45,7 +45,7 @@ module mkTagAlloc(TagServer);
       if ( !initialized ) begin
          nextTag = newTag;
          newTag <= newTag + 1;
-         if ( newTag + 1 == -1 )
+         if ( newTag  == -1 )
             initialized <= True;
       end
       else

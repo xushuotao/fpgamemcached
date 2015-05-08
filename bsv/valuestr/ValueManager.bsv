@@ -1,39 +1,34 @@
 import FIFO::*;
 import FIFOF::*;
 import SpecialFIFOs::*;
+import LFSR::*;
 import Vector::*;
 import GetPut::*;
+import LFSR::*;
 import ClientServer::*;
+import ClientServerHelper::*;
 
-import DRAMArbiterTypes::*;
-import ValDRAMCtrlTypes::*;
+import DRAMCommon::*;
+import ValuestrCommon::*;
 
 /*---------------------------------------------------------------------------------------*/
 typedef enum {Idle, ReadHeader, ProcHeader} ValMng_State deriving (Bits, Eq);
 
-interface ValAllocIFC;
+/*interface ValAllocIFC;
    method Action newAddrReq(Bit#(64) nBytes, Bit#(64) oldAddr, Bool trade_in);
    method ActionValue#(Bit#(64)) newAddrResp();
-endinterface
+endinterface*/
 
-interface ValInitIFC;
-   method Action initValDelimit(Bit#(64) randMax1, Bit#(64) randMax2, Bit#(64) randMax3, Bit#(64) lgSz1, Bit#(64) lgSz2, Bit#(64) lgSz3);
-   method Action initAddrDelimit(Bit#(64) lgOffset1, Bit#(64) lgOffset2, Bit#(64) lgOffset3);
-endinterface
 
 interface ValManage_ifc;
-//   interface ValAccess_ifc valAccess;
-   interface ValAllocIFC valAlloc;
-   interface ValInitIFC valInit;
+   interface ValAllocServer server;
+   
+   interface ValManageInitIFC valInit;
 
-   interface DRAMClient dramClient;   
+   interface DRAM_LOCK_Client dramClient;   
    
 endinterface
 
-
-function Bit#(64) lfsr64(Bit#(64) x);
-   return {x[62:0], (x[63] ~^ x[62] ~^ x[61] ~^ x[60])};
-endfunction
 
 function Bit#(2) findLRU(Vector#(4, ValHeader) x);
    Integer retval = ?;
@@ -57,74 +52,98 @@ function Bit#(2) findLRU(Vector#(4, ValHeader) x);
 endfunction
 
 
-//(*synthesize*)
+(*synthesize*)
 module mkValManager(ValManage_ifc);
    
    /* initialization registers */
-   FIFOF#(Bit#(64)) oldAddr_1 <- mkSizedBypassFIFOF(3);
-   FIFOF#(Bit#(64)) oldAddr_2 <- mkSizedBypassFIFOF(3);
-   FIFOF#(Bit#(64)) oldAddr_3 <- mkSizedBypassFIFOF(3);
+   FIFOF#(Bit#(32)) oldAddr_1 <- mkSizedBypassFIFOF(3);
+   FIFOF#(Bit#(32)) oldAddr_2 <- mkSizedBypassFIFOF(3);
+   FIFOF#(Bit#(32)) oldAddr_3 <- mkSizedBypassFIFOF(3);
    
-   Reg#(Bit#(64)) reg_lgSz1 <- mkRegU();
-   Reg#(Bit#(64)) reg_lgSz2 <- mkRegU();
-   Reg#(Bit#(64)) reg_lgSz3 <- mkRegU();
-   Reg#(Bit#(64)) reg_randMax1 <- mkRegU();
-   Reg#(Bit#(64)) reg_randMax2 <- mkRegU();
-   Reg#(Bit#(64)) reg_randMax3 <- mkRegU();
+   Reg#(Bit#(32)) reg_lgSz1 <- mkRegU();
+   Reg#(Bit#(32)) reg_lgSz2 <- mkRegU();
+   Reg#(Bit#(32)) reg_lgSz3 <- mkRegU();
+   Reg#(Bit#(32)) reg_randMax1 <- mkRegU();
+   Reg#(Bit#(32)) reg_randMax2 <- mkRegU();
+   Reg#(Bit#(32)) reg_randMax3 <- mkRegU();
    
-   Reg#(Bit#(64)) reg_size1 <- mkRegU();
-   Reg#(Bit#(64)) reg_size2 <- mkRegU();
-   Reg#(Bit#(64)) reg_size3 <- mkRegU();
+   Reg#(Bit#(32)) reg_size1 <- mkRegU();
+   Reg#(Bit#(32)) reg_size2 <- mkRegU();
+   Reg#(Bit#(32)) reg_size3 <- mkRegU();
    
-   //Reg#(Bit#(64)) reg_lgOffset1 <- mkRegU();
-   //Reg#(Bit#(64)) reg_lgOffset2 <- mkRegU();
-   //Reg#(Bit#(64)) reg_lgOffset3 <- mkRegU();
+   //Reg#(Bit#(32)) reg_lgOffset1 <- mkRegU();
+   //Reg#(Bit#(32)) reg_lgOffset2 <- mkRegU();
+   //Reg#(Bit#(32)) reg_lgOffset3 <- mkRegU();
    
-   Reg#(Bit#(64)) reg_offset1 <- mkRegU();
-   Reg#(Bit#(64)) reg_offset2 <- mkRegU();
-   Reg#(Bit#(64)) reg_offset3 <- mkRegU();
+   Reg#(Bit#(32)) reg_offset1 <- mkRegU();
+   Reg#(Bit#(32)) reg_offset2 <- mkRegU();
+   Reg#(Bit#(32)) reg_offset3 <- mkRegU();
    
-   Reg#(Bit#(64)) nextAddr1 <- mkRegU();
-   Reg#(Bit#(64)) nextAddr2 <- mkRegU();
-   Reg#(Bit#(64)) nextAddr3 <- mkRegU();
+   Reg#(Bit#(32)) nextAddr1 <- mkRegU();
+   Reg#(Bit#(32)) nextAddr2 <- mkRegU();
+   Reg#(Bit#(32)) nextAddr3 <- mkRegU();
    
    Reg#(Bool) initValDone <- mkReg(False);
    Reg#(Bool) initAddrDone <- mkReg(False);
    
-   Reg#(ValMng_State) state <- mkReg(Idle);
-   
-   Reg#(Bit#(64)) pseudo_random <- mkReg(1);
-   
-   Vector#(4, Reg#(Bit#(64))) addrBuf <- replicateM(mkRegU());
+      
+   Vector#(4, Reg#(Bit#(32))) addrBuf <- replicateM(mkRegU());
    Reg#(Vector#(4, ValHeader)) hdBuf <- mkRegU();
    Reg#(Bit#(3)) numOfReqs <- mkReg(0);
    Reg#(Bit#(3)) numOfResp <- mkReg(0);
    
    /* input and output queues */
    
-   FIFO#(Tuple3#(Bit#(64), Bit#(64), Bool)) inputFifo <- mkFIFO();
-   FIFO#(Bit#(64)) outputFifo <- mkFIFO();
+   FIFO#(ValAllocReqT) inputFifo <- mkFIFO();
+   FIFO#(ValAllocRespT) outputFifo <- mkFIFO();
+
    
    FIFO#(Bit#(2)) whichBinFifo <- mkBypassFIFO();
-   FIFOF#(Tuple2#(Maybe#(Bit#(64)),Bit#(2))) toRdHeader <- mkFIFOF();
+   FIFOF#(Tuple2#(Maybe#(Bit#(32)),Bit#(2))) toRdHeader <- mkFIFOF();
    
-   FIFO#(DRAMReq) dramCmdQ <- mkFIFO();
+   FIFO#(DRAM_LOCK_Req) dramCmdQ <- mkFIFO();
    FIFO#(Bit#(512)) dramDataQ <- mkFIFO();
 
    
-   rule push_OldAddr;
+   rule push_OldAddr if ( initValDone && initAddrDone);
       let v = inputFifo.first();
       inputFifo.deq();
       
-      let nBytes = tpl_1(v);
-      let oldAddr = tpl_2(v);
-      let trade_in = tpl_3(v);
+      let nBytes = v.nBytes;
+      let oldAddr = v.oldAddr;
+      let oldNBytes = v.oldNBytes;
+      let trade_in = v.trade_in;
+      
+      Bit#(2) whichBin_old;
+
+      let oldSz = oldNBytes + (fromInteger(valueOf(ValHeaderSz))>>3);
+      $display("trade_in = %d, nBytes = %d, oldAddr = %d, oldNBytes = %d", trade_in, nBytes, oldAddr, oldNBytes);
+      $display("oldSz = %d, regSize1 = %d, regSize2 = %d, regSize3 = %d", oldSz, reg_size1, reg_size2, reg_size3);
+            
+      if ( oldSz <= reg_size1) begin
+         whichBin_old = 0;
+      end
+      else if ( oldSz <= reg_size2 ) begin
+         whichBin_old = 1;
+      end
+      else begin
+         whichBin_old = 2;
+      end
+      
+      if ( trade_in ) begin
+         if ( whichBin_old == 0 ) begin
+            oldAddr_1.enq(oldAddr);
+         end
+         else if ( whichBin_old == 1) begin
+            oldAddr_2.enq(oldAddr);
+         end
+         else begin
+            oldAddr_3.enq(oldAddr);
+         end
+      end
       
       Bit#(2) whichBin;
-      
       let totalSz = nBytes + (fromInteger(valueOf(ValHeaderSz))>>3);
-      
-      $display("totalSz = %d, regSize1 = %d, regSize2 = %d, regSize3 = %d", totalSz, reg_size1, reg_size2, reg_size3);
       if ( totalSz <= reg_size1) begin
          whichBin = 0;
       end
@@ -134,19 +153,7 @@ module mkValManager(ValManage_ifc);
       else begin
          whichBin = 2;
       end
-      
-      if ( trade_in ) begin
-         if ( whichBin == 0 ) begin
-            oldAddr_1.enq(oldAddr);
-         end
-         else if ( whichBin == 1) begin
-            oldAddr_2.enq(oldAddr);
-         end
-         else begin
-            oldAddr_3.enq(oldAddr);
-         end
-      end
-      
+      $display("whichbin = %d", whichBin);
       whichBinFifo.enq(whichBin);
            
    endrule
@@ -155,7 +162,7 @@ module mkValManager(ValManage_ifc);
       let whichBin = whichBinFifo.first;
       whichBinFifo.deq();
       
-      Maybe#(Bit#(64)) newAddr = tagged Invalid;
+      Maybe#(Bit#(32)) newAddr = tagged Invalid;
       
       
       if ( whichBin == 0 ) begin
@@ -188,91 +195,96 @@ module mkValManager(ValManage_ifc);
             nextAddr3 <= nextAddr3 + reg_size3;
          end
       end
+      $display("Addr = %d", fromMaybe(?, newAddr));
       if (!isValid(newAddr)) $display("Out of addresses for bin = %d", whichBin);
       toRdHeader.enq(tuple2(newAddr, whichBin));
    endrule
-   
-   rule rdHeader if (state == Idle && toRdHeader.notEmpty);
-      let d = toRdHeader.first;
-      let retval = tpl_1(d);
       
-      case (retval) matches
-         tagged Valid .v: begin
-            outputFifo.enq(v);
-            toRdHeader.deq;
-         end
-         tagged Invalid: begin
-            state <= ReadHeader;
-            numOfReqs <= 0;
-            numOfResp <= 0;
-           end
-      endcase
-   endrule
+   Reg#(Bit#(2)) reqCnt <- mkReg(0);
+   let lfsr <- mkLFSR_32;
 
-   rule issueRd if ( state == ReadHeader && numOfReqs < 4);
+   FIFO#(Tuple3#(Maybe#(Bit#(32)),Bit#(2), Vector#(4, Bit#(32)))) readRespHandleQ <- mkFIFO();
+   rule issueRd;
       let d = toRdHeader.first;
       let whichBin = tpl_2(d);
+              
       
-     
-      pseudo_random <= lfsr64(pseudo_random);
-      Bit#(64) addr;
-      if (whichBin == 0) begin
-         addr = reg_offset1 + ((reg_randMax1 & pseudo_random) << reg_lgSz1);
+      Bit#(32) addr = ?;
+      Bool doReadHeader = !isValid(tpl_1(d));
+      let addrVect = readVReg(addrBuf);
+               
+      if ( doReadHeader ) begin
+         let pseudo_random = lfsr.value;
+         lfsr.next();
+         
+         if (whichBin == 0) begin
+            addr = reg_offset1 + ((reg_randMax1 & pseudo_random) << reg_lgSz1);
+         end
+         else if (whichBin == 1) begin
+            addr = reg_offset2 + ((reg_randMax2 & pseudo_random) << reg_lgSz2);
+         end
+         else begin
+            addr = reg_offset3 + ((reg_randMax3 & pseudo_random) << reg_lgSz3);
+         end
+         addrVect[reqCnt] = addr;
+         addrBuf[reqCnt] <= addr;
+         $display("Value Evict:: DRAMCmd, addr = %d, numBytes = %d", addr, valueOf(ValHeaderBytes));
+         dramCmdQ.enq(DRAM_LOCK_Req{initlock: False, ignoreLock: True, lock: False, rnw:True, addr: extend(addr), data:?, numBytes:fromInteger(valueOf(ValHeaderBytes))});
+         reqCnt <= reqCnt + 1;
       end
-      else if (whichBin == 1) begin
-         addr = reg_offset2 + ((reg_randMax2 & pseudo_random) << reg_lgSz2);
+      
+      if ( reqCnt == 0 && !doReadHeader) begin
+         readRespHandleQ.enq(tuple3(tpl_1(d),tpl_2(d),?));
+         toRdHeader.deq();
       end
-      else begin
-         addr = reg_offset3 + ((reg_randMax3 & pseudo_random) << reg_lgSz3);
+      else if (reqCnt + 1 == 0) begin
+         //readRespHandleQ.enq(d);
+         readRespHandleQ.enq(tuple3(tpl_1(d),tpl_2(d), addrVect));
+         toRdHeader.deq();
       end
-      //if ( !cmplBufQuery.search(addr) ) begin
-      addrBuf[numOfReqs] <= addr;
-      dramCmdQ.enq(DRAMReq{rnw:True, addr: addr, data:?, numBytes:64});
-      numOfReqs <= numOfReqs + 1;
-      //end
+
       
    endrule
    
-   rule collectRd if ( state == ReadHeader );
-      let old_hdBuf = hdBuf;
-      if ( numOfResp < 4 ) begin
-         //let d <- dram.read;
+   Reg#(Bit#(2)) respCnt <- mkReg(0);
+   rule collectRd;
+      let v = readRespHandleQ.first();
+      let addrBuf = tpl_3(v);
+      Bool doReadHeader = !isValid(tpl_1(v));
+      let new_hdBuf = hdBuf;      
+      
+      if ( doReadHeader) begin
          let d <- toGet(dramDataQ).get();
-         old_hdBuf[numOfResp] = unpack(d[511: valueOf(TSub#(512,ValHeaderSz))]);
-         numOfResp <= numOfResp + 1;
+         new_hdBuf[respCnt] = unpack(truncate(pack(d)));//unpack(d[511: valueOf(TSub#(512,ValHeaderSz))]);
+         hdBuf <= new_hdBuf;
+         respCnt <= respCnt + 1;
       end
-      else begin
-         state <= ProcHeader;
+
+      if (respCnt == 0 && !doReadHeader) begin
+         outputFifo.enq(ValAllocRespT{newAddr: fromMaybe(?, tpl_1(v)), doEvict: False});
+         readRespHandleQ.deq();
       end
-      hdBuf <= old_hdBuf;
+      else if (respCnt + 1 == 0 ) begin
+         let ind = findLRU(new_hdBuf);
+         let hdr = new_hdBuf[ind];
+         
+         outputFifo.enq(ValAllocRespT{newAddr: addrBuf[ind], doEvict: True, oldNBytes: hdr.nBytes, hv: hdr.hv, idx: hdr.idx});
+         readRespHandleQ.deq();
+      end
    endrule
-   
-   rule procHd if ( state == ProcHeader) ; // 
-      let ind = findLRU(hdBuf);
-      outputFifo.enq(addrBuf[ind]);
-      toRdHeader.deq();
-      state <= Idle;
-   endrule
+      
       
 
-   interface DRAMClient dramClient;
+   interface DRAM_LOCK_Client dramClient;
       interface Get request = toGet(dramCmdQ);
       interface Put response = toPut(dramDataQ);
    endinterface      
    
-   interface ValAllocIFC valAlloc;
-      method Action newAddrReq(Bit#(64) nBytes, Bit#(64) oldAddr, Bool trade_in) if (initValDone && initAddrDone);
-         inputFifo.enq(tuple3(nBytes, oldAddr, trade_in));
-      endmethod
-      method ActionValue#(Bit#(64)) newAddrResp() if (initValDone && initAddrDone);
-         let retval = outputFifo.first();
-         outputFifo.deq();
-         return retval;
-      endmethod
-   endinterface
-
-   interface ValInitIFC valInit;
-      method Action initValDelimit(Bit#(64) randMax1, Bit#(64) randMax2, Bit#(64) randMax3, Bit#(64) lgSz1, Bit#(64) lgSz2, Bit#(64) lgSz3) if (!initValDone);
+   interface ValAllocServer server = toServer(inputFifo, outputFifo);
+   
+   interface ValManageInitIFC valInit;
+      method Action initValDelimit(Bit#(32) randMax1, Bit#(32) randMax2, Bit#(32) randMax3, Bit#(32) lgSz1, Bit#(32) lgSz2, Bit#(32) lgSz3) if (!initValDone);
+         $display("ValueManager init Addr Delimiter: randMax1 = %d, randMax2 = %d, randMax3 = %d, lgSz1 = %d, lgSz2 = %d, lgSz3 = %d", randMax1, randMax2, randMax3, lgSz1, lgSz2, lgSz3);
          reg_randMax1 <= randMax1;
          reg_randMax2 <= randMax2;
          reg_randMax3 <= randMax3;
@@ -284,11 +296,13 @@ module mkValManager(ValManage_ifc);
          reg_size2 <= 1 << lgSz2;
          reg_size3 <= 1 << lgSz3;
          initValDone <= True;
+         lfsr.seed(1);
       endmethod
-      method Action initAddrDelimit(Bit#(64) offset1, Bit#(64) offset2, Bit#(64) offset3) if (!initAddrDone);
+      method Action initAddrDelimit(Bit#(32) offset1, Bit#(32) offset2, Bit#(32) offset3) if (!initAddrDone);
          //reg_lgOffset1 <= lgOffset1;
          //reg_lgOffset2 <= lgOffset2;
          //reg_lgOffset3 <= lgOffset3;
+         $display("ValueManager init Addr Delimiter: offset1 = %d, offset2 = %d, offset3 = %d", offset1, offset2, offset3);
          
          reg_offset1 <= offset1;
          reg_offset2 <= offset2;

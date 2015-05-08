@@ -1,11 +1,14 @@
 import ControllerTypes::*;
-import ValDRAMCtrlTypes::*;
+//import ValDRAMCtrlTypes::*;
+import MemcachedTypes::*;
+import ValuestrCommon::*;
 import ValFlashCtrlTypes::*;
 import FlashWriter::*;
 import FlashReader::*;
+import Time::*;
 
-import DRAMArbiterTypes::*;
-import DRAMPartioner::*;
+import DRAMCommon::*;
+import DRAMSegment::*;
 import SerDes::*;
 import Align::*;
 import MyArbiter::*;
@@ -14,6 +17,7 @@ import Shifter::*;
 
 import FIFO::*;
 import FIFOF::*;
+import SpecialFIFOs::*;
 import GetPut::*;
 import Vector::*;
 import Connectable::*;
@@ -21,23 +25,13 @@ import ClientServer::*;
 import RegFile::*;
 import ClientServerHelper::*;
 
-interface FlashWriteBufWrIfc;
-   interface Put#(ValSizeT) writeReq;
-   interface Get#(FlashAddrType) writeAck;
-   interface Put#(Bit#(512)) writeWord;
-endinterface
-
-interface FlashWriteBufRdIfc;
-   interface Put#(FlashReadReqT) readReq;
-   interface Get#(Tuple2#(Bit#(64), TagT)) readVal;
-endinterface
-
 interface FlashWriteBufIfc;
-   interface FlashWriteBufWrIfc writeUser;
-   interface FlashWriteBufRdIfc readUser;
+   interface FlashWriteServer writeUser;
+   //interface FlashReadServer readUser;
+   interface FlashValueStoreReadServer readUser;
    interface FlushClient flashFlClient;
-   interface FlashReaderClient flashRdClient;
-   interface DRAMClient dramClient;
+   interface FlashReadClient flashRdClient;
+   interface DRAM_LOCK_Client dramClient;
 endinterface
 
 typedef struct{
@@ -49,9 +43,11 @@ typedef struct{
    } WriteBufCmdT deriving (Bits, Eq);
 
 
+Integer flashHeaderSz = valueOf(TSub#(BytesOf#(ValHeader),BytesOf#(Time_t)));
+
 (*synthesize*)
 module mkFlashWriteBuffer(FlashWriteBufIfc);
-   Vector#(2,FIFO#(DRAMReq)) dramCmdQs <- replicateM(mkFIFO);
+   Vector#(2,FIFO#(DRAM_LOCK_Req)) dramCmdQs <- replicateM(mkFIFO);
    Vector#(2,FIFO#(Bit#(512))) dramDtaQs <- replicateM(mkFIFO);
    
    Reg#(SuperPageIndT) superPageCnt <- mkReg(0);      
@@ -61,8 +57,11 @@ module mkFlashWriteBuffer(FlashWriteBufIfc);
    FIFO#(WriteBufCmdT) reqQ <- mkSizedFIFO(valueOf(NumTags));
    FIFO#(WriteBufCmdT) dramReqQ <- mkFIFO;
    
+   Vector#(2, FIFOF#(Tuple2#(ValSizeT, TagT))) burstSzQs <- replicateM(mkSizedFIFOF(32));
+   FIFO#(ValSizeT) burstSzQ <- mkFIFO();
+   
    FIFO#(Bit#(512)) inDataQ <- mkFIFO;
-   FIFO#(FlashAddrType) respQ <- mkFIFO;
+   FIFO#(FlashAddrType) respQ <- mkBypassFIFO;
    /* send dram cmd to write the dram write buf */
    
    Reg#(Bit#(1)) currBuf <- mkReg(0);
@@ -72,7 +71,8 @@ module mkFlashWriteBuffer(FlashWriteBufIfc);
    Vector#(2,Reg#(Bit#(TAdd#(TLog#(SuperPageSz),1)))) byteCnt_seg_V <- replicateM(mkReg(0));
    Vector#(2,Reg#(Bit#(TAdd#(TLog#(SuperPageSz),1)))) byteCnt_wr_V <- replicateM(mkReg(0));
    
-   ByteDeAlignIfc#(Bit#(512), Bit#(1)) deAlign <- mkByteDeAlignPipeline;
+   //ByteDeAlignIfc#(Bit#(512), Bit#(1)) deAlign <- mkByteDeAlignPipeline;
+   ByteDeAlignIfc#(Bit#(512), Bit#(1)) deAlign <- mkByteDeAlignCombinational;
    mkConnection(deAlign.inPipe, toGet(inDataQ));
    
    FIFO#(FlushReqT) flushReqQ <- mkFIFO();
@@ -136,9 +136,9 @@ module mkFlashWriteBuffer(FlashWriteBufIfc);
       
       let addr = byteCnt_wr_V[dramSel];
       
-      //$display("writeBuf dramWr dramSel = %d, addr = %d, data = %h, nBytes = %d", dramSel, addr, data, nBytes);
+      $display("%m:: writeBuf dramWr[dramSel = %d], addr = %d, data = %h, nBytes = %d", dramSel, addr, data, nBytes);
       byteCnt_wr_V[dramSel] <= byteCnt_wr_V[dramSel] + extend(nBytes);
-      dramCmdQs[dramSel].enq(DRAMReq{rnw: False, addr: extend(addr), data: data, numBytes: nBytes});
+      dramCmdQs[dramSel].enq(DRAM_LOCK_Req{initlock: False, rnw: False, addr: extend(addr), data: data, numBytes: nBytes, lock:False, ignoreLock: True});
       
       if ( byteCnt_Wr + extend(nBytes) == args.numBytes ) begin
          byteCnt_Wr <= 0;
@@ -154,24 +154,26 @@ module mkFlashWriteBuffer(FlashWriteBufIfc);
    RegFile#(TagT, ValSizeT) readCmdLUT <- mkRegFileFull;
     
    FIFO#(FlashReadReqT) flashRdReqQ <- mkFIFO;
-   FIFO#(Tuple2#(Bit#(64), TagT)) flashRdRespQ <- mkFIFO;
+   FIFO#(Tuple2#(WordT, TagT)) flashRdRespQ <- mkFIFO;
    
-   ByteAlignIfc#(Bit#(512), TagT) align <- mkByteAlignPipeline;
+   //ByteAlignIfc#(Bit#(512), TagT) align <- mkByteAlignPipeline;
+   ByteAlignIfc#(Bit#(512), TagT) align <- mkByteAlignCombinational;
  
    rule doReadCmd if (reqQ.first.rnw);
       let req <- toGet(reqQ).get();
-      let addr = req.addr;
+      FlashAddrType addr = unpack(pack(req.addr) + fromInteger(flashHeaderSz));
       let numBytes = req.numBytes;
       let reqId = req.reqId;
       
       readCmdLUT.upd(reqId, numBytes);
       
       SuperPageIndT currSegId = truncateLSB(pack(addr));
-      //$display("currSegId = %d, superPageCnt = %d, currBuf = %d", currSegId, superPageCnt, currBuf);
+      $display("currSegId = %d, superPageCnt = %d, currBuf = %d", currSegId, superPageCnt, currBuf);
       if (currSegId == superPageCnt) begin
          // do dram Read
          $display("Serve Flash Read commmand from DRAM reqId = %d", reqId);
          req.bufId = currBuf;
+         burstSzQs[0].enq(tuple2(extend(numBytes), reqId));
          dramReqQ.enq(req);
          //reqQ.deq();
          Bit#(6) byteOffset = truncate(pack(addr));
@@ -182,6 +184,7 @@ module mkFlashWriteBuffer(FlashWriteBufIfc);
          $display("Serve Flash Read commmand from DRAM reqId = %d", reqId);
          req.bufId = ~currBuf;
          dramReqQ.enq(req);
+         burstSzQs[0].enq(tuple2(extend(numBytes), reqId));
          //reqQ.deq();
          Bit#(6) byteOffset = truncate(pack(addr));
          align.align(byteOffset, extend(numBytes), reqId);
@@ -192,7 +195,7 @@ module mkFlashWriteBuffer(FlashWriteBufIfc);
       end
    endrule
    
-   FIFO#(Bit#(1)) dramSelQ <- mkSizedFIFO(16);   
+   FIFO#(Bit#(1)) dramSelQ <- mkSizedFIFO(32);   
    Reg#(ValSizeT) byteCnt_Rd <- mkReg(0);
    rule driveDRAMReadCmd if (dramReqQ.first.rnw);
       let v = dramReqQ.first();
@@ -213,147 +216,124 @@ module mkFlashWriteBuffer(FlashWriteBufIfc);
          nBytes = 64 - extend(byteOffset);
       end
       
-      //$display("writeBuf dramRd dramSel = %d, addr = %d, nBytes = %d", dramSel, rowidx << 6, nBytes);
-      dramCmdQs[dramSel].enq(DRAMReq{rnw:True, addr: extend(rowidx << 6), data:?, numBytes:nBytes});
-      dramSelQ.enq(dramSel);
-
+      Bool lock = True;
       if (byteCnt_Rd + extend(nBytes) < numBytes) begin
          byteCnt_Rd <= byteCnt_Rd + extend(nBytes);
-      end
+           end
       else begin
+         lock = False;
          byteCnt_Rd <= 0;
          dramReqQ.deq();
       end
+      
+      Bool initlock = False;
+      if ( byteCnt_Rd == 0)
+         initlock = True;
+      
+      $display("writeBuf dramRd dramSel = %d, addr = %d, nBytes = %d", dramSel, rowidx << 6, nBytes);
+      dramCmdQs[dramSel].enq(DRAM_LOCK_Req{initlock: initlock, rnw:True, addr: extend(rowidx << 6), data:?, numBytes:nBytes, lock: lock, ignoreLock: False});
+      dramSelQ.enq(dramSel);
+
    endrule
    
    FIFO#(Bit#(512)) dramDtaQ <- mkFIFO();
    mkConnection(toGet(dramDtaQ), align.inPipe);
-   
+            
    for (Integer i = 0; i < 2; i = i + 1) begin
+      Reg#(Bit#(32)) byteCnt_bucket <- mkReg(0);
       rule doDeqDramDta if ( dramSelQ.first == fromInteger(i));
          dramSelQ.deq();
          let dta <- toGet(dramDtaQs[i]).get();
-         //$display("dramDtaQ got data = %h", dta);
+         
+         $display("%m::dramDtaQ[%d] got data = %h, byteCnt = %d", i, dta, byteCnt_bucket);
+         byteCnt_bucket <= byteCnt_bucket + 64;
          dramDtaQ.enq(dta);
       endrule
    end
    
       
    
-   SerializerIfc#(512, 64, TagT) ser <- mkSerializer();
+   SerializerIfc#(512, WordSz, TagT) ser <- mkSerializer();
+   
+   Reg#(Bit#(32)) byteCnt_shit <- mkReg(0);
       
    rule doSer;
       let v <- align.outPipe.get();
       let data = tpl_1(v);
       let numBytes = tpl_2(v);
       let reqId = tpl_3(v);
-   
+      /*
       Bit#(4) numWords = truncate(numBytes >> 3);
-      
       if ( numBytes[2:0] != 0)
          numWords = numWords + 1;
-      
+      */
+      byteCnt_shit <= byteCnt_shit + extend(numBytes);
+      $display("%m:: aligner got data = %h, byteCnt_shit = %d, numBytes = %d", data, byteCnt_shit, numBytes);
+      Bit#(TAdd#(TLog#(TDiv#(512, WordSz)),1)) numWords = truncate(numBytes >> valueOf(TLog#(WordBytes)));
+      Bit#(TLog#(WordBytes)) remainder = truncate(numBytes);
+      if ( remainder != 0)
+         numWords = numWords + 1;
       ser.marshall(data, numWords, reqId);
    endrule    
    
    
    
-   Vector#(2, FIFOF#(Tuple2#(Bit#(64), TagT))) respDtaQs <- replicateM(mkFIFOF);
-   FIFO#(Tuple2#(Bit#(64), TagT)) respDtaQ <- mkFIFO;
-   
-   Vector#(2, FIFOF#(ValSizeT)) respSizeQs <- replicateM(mkFIFOF);
-
-   Reg#(ValSizeT) byteCnt_dramResp <- mkReg(0);
-   Reg#(ValSizeT) byteCntMax_dramResp <- mkReg(0);
+   Vector#(2, FIFOF#(Tuple2#(WordT, TagT))) respDtaQs <- replicateM(mkFIFOF);
+   FIFO#(Tuple2#(WordT, TagT)) respDtaQ <- mkFIFO;
+      
+   Reg#(Bit#(32)) byteCnt_debug <- mkReg(0);
    rule doDeqDramRes;
       let d <- ser.getVal;
       respDtaQs[0].enq(d);
-      
-      /*let reqId = tpl_2(d);
-      
-      if ( byteCnt_dramResp + 8 >= byteCntMax_dramResp) begin
-         byteCnt_dramResp <= 0;
-         byteCntMax_dramResp <= readCmdLUT.sub(reqId);
-         respSizeQs[0].enq(readCmdLUT.sub(reqId));
-      end
-      else begin
-         byteCnt_dramResp <= byteCnt_dramResp + 8;
-      end*/
+      $display("%m:: WriteBuf got data from DRAM, byteCnt = %d, d = %h, reqid = %d", byteCnt_debug, tpl_1(d), tpl_2(d));
+      byteCnt_debug <= byteCnt_debug + 16;
    endrule
-
-   Reg#(ValSizeT) byteCnt_flashResp <- mkReg(0);
-   Reg#(ValSizeT) byteCntMax_flashResp <- mkReg(0);
- 
+   
    rule doDeqFlashRes;
       let d <- toGet(flashRdRespQ).get();
       respDtaQs[1].enq(d);
-      
-      /*let reqId = tpl_2(d);
-      
-      if ( byteCnt_flashResp + 8 >= byteCntMax_flashResp) begin
-         byteCnt_flashResp <= 0;
-         byteCntMax_flashResp <= readCmdLUT.sub(reqId);
-         respSizeQs[1].enq(readCmdLUT.sub(reqId));
-      end
-      else begin
-         byteCnt_flashResp <= byteCnt_flashResp + 8;
-      end*/
    endrule
+   /*
+   Reg#(ValSizeT) byteCnt_resp <- mkReg(0);
+  
+   FIFO#(Tuple2#(Bit#(1), ValSizeT)) nextBurst <- mkBypassFIFO();
    
    Arbiter_IFC#(2) arbiter <- mkArbiter(False);
    for (Integer i = 0; i < 2; i = i + 1) begin
-      rule doReqs_0 if (respDtaQs[i].notEmpty);
+      rule doReqs_0 if (burstSzQs[i].notEmpty);
          arbiter.clients[i].request;
       endrule
       
       rule doReqs_1 if (arbiter.grant_id == fromInteger(i));
-         let v <- toGet(respDtaQs[i]).get();
-         respDtaQ.enq(v);
-      endrule
-   end
-
-   //FIFO#(Tuple2#(Bit#(1), ValSizeT)) respSizeQ <- mkFIFO;
-   /*
-   for (Integer i = 0; i < 2; i = i + 1) begin
-      rule doReqs_0 if (respSizeQs[i].notEmpty);
-         arbiter.clients[i].request;
-      endrule
-      
-      rule doReqs_1 if (arbiter.grant_id == fromInteger(i));
-         let v <- toGet(respSizeQs[i]).get();
-         respSizeQ.enq(tuple2(fromInteger(i),v));
+         let nBytes <- toGet(burstSzQs[i]).get();
+         burstSzQ.enq(nBytes);
+         nextBurst.enq(tuple2(fromInteger(i), nBytes));
       endrule
    end
    
-   Reg#(ValSizeT) byteCnt_Resp <- mkReg(0);
- 
-   rule doResp;
-      let v = respSizeQ.first();
+   rule doBurst;
+
+      let v = nextBurst.first();
       let sel = tpl_1(v);
-      let numBytes = tpl_2(v);
-      if ( byteCnt_Resp + 8 >= numBytes) begin
-         respSizeQ.deq();
-         byteCnt_Resp <= 0;
+      let nBytes = tpl_2(v);
+      $display("%m:: byteCnt_resp = %d, nBytes = %d, sel = %d", byteCnt_resp, nBytes, sel);
+      if ( byteCnt_resp + 16 < nBytes) begin
+         byteCnt_resp <= byteCnt_resp + 16;
       end
       else begin
-         byteCnt_Resp <= byteCnt_Resp + 8;
+         byteCnt_resp <= 0;
+         nextBurst.deq();
       end
-
-      let data <- toGet(respDtaQs[sel]).get();
-      //$display("dequeing data from sel = %d, data = %h, tag = %d", sel, tpl_1(data), tpl_2(data));
-      respDtaQ.enq(data);
+      let d <- toGet(respDtaQs[sel]).get();
+      respDtaQ.enq(d);
    endrule
-   */
-   
-   Vector#(2,DRAMClient) dramClients;
+  */
+
+   Vector#(2,DRAM_LOCK_Client) dramClients;
    for (Integer i = 0; i < 2; i = i + 1)
       dramClients[i] = toClient(dramCmdQs[i], dramDtaQs[i]);
-      /*((interface DRAMClient;
-                           interface Get request = toGet(dramCmdQs[i]);
-                           interface Put response = toPut(dramDtaQs[i]);
-                        endinterface);*/
    
-   DRAMSegmentIfc#(2) dramPar <- mkDRAMSegments;
+   DRAM_LOCK_Segment_Bypass#(2) dramPar <- mkDRAM_LOCK_Segments_Bypass;
    
    mkConnection(dramPar.dramServers[0], dramClients[0]);
    mkConnection(dramPar.dramServers[1], dramClients[1]);
@@ -367,33 +347,35 @@ module mkFlashWriteBuffer(FlashWriteBufIfc);
 
                   
 
-   interface FlashWriteBufWrIfc writeUser;
-      interface Put writeReq;
-         method Action put(ValSizeT v);
-            reqQ.enq(WriteBufCmdT{rnw: False, numBytes: v});
-         endmethod
+   interface FlashWriteServer writeUser;
+      interface Server writeServer;
+         interface Put request;
+            method Action put(ValSizeT v);
+               reqQ.enq(WriteBufCmdT{rnw: False, numBytes: v});
+            endmethod
+         endinterface
+         interface Get response = toGet(respQ);
       endinterface
-      interface Get writeAck = toGet(respQ);
       interface Put writeWord = toPut(inDataQ);
    endinterface
    
-   interface FlashWriteBufRdIfc readUser;
-      interface Put readReq;
+   interface FlashValueStoreReadServer readUser;
+      interface Put request;
          method Action put(FlashReadReqT v);
             reqQ.enq(WriteBufCmdT{rnw: True, addr: v. addr, numBytes: v.numBytes, reqId: v.reqId});
          endmethod
       endinterface
-      interface Get readVal = toGet(respDtaQ);
-   /*
-         method ActionValue#(Tuple2#(Bit#(64), TagT)) get();
-            let d <- ser.getVal;
-            return d;
-         endmethod
-      endinterface*/
+      interface Get dramResp = toGet(respDtaQs[0]);
+      interface Get flashResp = toGet(respDtaQs[1]);
+      interface Get dramBurstSz = toGet(burstSzQs[0]);
+      interface Get flashBurstSz = toGet(burstSzQs[1]);
    endinterface
-
+   
    interface FlushClient flashFlClient = toClient(flushReqQ, flushRespQ);
-   interface FlashReaderClient flashRdClient = toClient(flashRdReqQ, flashRdRespQ);
+   interface FlashReadClient flashRdClient;
+      interface Server readClient = toClient(flashRdReqQ, flashRdRespQ);
+      interface Put burstSz = toPut(burstSzQs[1]);
+   endinterface
    
    interface DRAMClient dramClient = dramPar.dramClient;
 endmodule

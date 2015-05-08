@@ -1,10 +1,10 @@
 import AuroraImportFmc1::*;
 import ControllerTypes::*;
+import FlashServer::*;
 import AuroraCommon::*;
 
-import DRAMArbiterTypes::*;
+import DRAMCommon::*;
 import DRAMArbiter::*;
-import DRAMPartioner::*;
 
 import WriteBuffer::*;
 
@@ -15,32 +15,29 @@ import Connectable::*;
 import GetPut::*;
 
 
-interface FlashValueStoreIfc;
-   interface FlashWriteBufWrIfc writeServer;
-   interface FlashWriteBufRdIfc readServer;
-   interface DRAMClient dramClient;
-   interface Aurora_Pins#(4) aurora_fmc1;
-   interface Aurora_Clock_Pins aurora_clk_fmc1;
-endinterface
-
-module mkFlashValueStore#(Clock clk250)(FlashValueStoreIfc);
+(*synthesize*)
+module mkFlashValueStore(FlashValueStoreIfc);
       
    let writeBuffer <- mkFlashWriteBuffer();
-   let valFlashCtrl <- mkValFlashCtrl(clk250);
+   let valFlashCtrl <- mkValFlashCtrl();
    
    mkConnection(writeBuffer.flashFlClient, valFlashCtrl.flushServer);
    mkConnection(writeBuffer.flashRdClient, valFlashCtrl.readServer);
    
-   DRAMArbiterIfc#(2) dramArb <- mkDRAMArbiter;
+   let dramArb <- mkDRAM_LOCK_Biased_Arbiter_Bypass;
    
    mkConnection(dramArb.dramServers[0], writeBuffer.dramClient);
    mkConnection(dramArb.dramServers[1], valFlashCtrl.dramClient);
 
    
-   interface FlashWriteBufWrIfc writeServer = writeBuffer.writeUser;
-   interface FlashWriteBufRdIfc readServer = writeBuffer.readUser;
-   interface DRAMClient dramClient = dramArb.dramClient;
-   interface Aurora_Pins aurora_fmc1 = valFlashCtrl.aurora_fmc1;
-   interface Aurora_Clock_Pins aurora_clk_fmc1 = valFlashCtrl.aurora_clk_fmc1;
+   interface FlashWriteServer writeServer = writeBuffer.writeUser;
+   interface FlashValueStoreReadServer readServer = writeBuffer.readUser;
+   interface DRAM_LOCK_Client dramClient = dramArb.dramClient;
+   interface FlashRawWriteClient flashRawWrClient = valFlashCtrl.flashRawWrClient;
+   interface FlashRawReadClient flashRawRdClient = valFlashCtrl.flashRawRdClient;
+   /*interface FlashPins flashPins;
+      interface Aurora_Pins aurora_fmc1 = valFlashCtrl.aurora_fmc1;
+      interface Aurora_Clock_Pins aurora_clk_fmc1 = valFlashCtrl.aurora_clk_fmc1;
+   endinterface*/
    
 endmodule
