@@ -69,7 +69,7 @@ module mkFlashServer#(FlashCtrlUser flash)(FlashServer);
    FIFO#(FlashCmd) cmdQ <- mkSizedFIFO(128);
    FIFO#(Tuple2#(FlashCmd, Bool)) rawCmdQ <- mkFIFO();
    
-   Vector#(NumChips, Reg#(Bit#(TLog#(NumBlocksPerChip)))) nextNewBlock <- replicateM(mkReg(0));
+   Vector#(NumChips, Reg#(Bit#(TAdd#(TLog#(NumBlocksPerChip), 1)))) nextNewBlock <- replicateM(mkReg(0));
    
    function BlockIdxT convertVirtualIdx(BusT bus, ChipT chip, Bit#(16) block);
       return  truncate(block) + (extend(chip) << lgBlkOffset) + (extend(bus) << (lgBlkOffset+lgWayOffset));

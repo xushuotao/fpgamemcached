@@ -262,7 +262,7 @@ module mkByteAlignCombinational(AlignIfc#(element_type, tag_type, lgWidth))
    FIFOF#(Tuple2#(Bit#(32), Bit#(32))) sftArgs <- mkFIFOF;
    FIFO#(Tuple4#(tag_type, Bit#(lgWidth), Bit#(32), Bit#(32))) sftArgs_1 <- mkSizedFIFO(4);
    
-   FIFOF#(element_type) wordQ <- mkFIFOF();
+   FIFOF#(element_type) wordQ <- mkSizedFIFOF(4);
    
    Reg#(element_type) readCache <- mkRegU;
    Reg#(Bit#(32)) wordCnt_in <- mkReg(0);

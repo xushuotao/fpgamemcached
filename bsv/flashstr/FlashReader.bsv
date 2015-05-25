@@ -189,7 +189,7 @@ module mkFlashReader(FlashReaderIFC);
    endrule
    
 
-   Vector#(NUM_BUSES,FIFO#(Bit#(128))) wordQs <- replicateM(mkSizedBRAMFIFO(512));
+   Vector#(NUM_BUSES,FIFO#(Bit#(128))) wordQs <- replicateM(mkSizedBRAMFIFO(512*3));
    Vector#(NUM_BUSES,FIFOF#(Tuple3#(Bit#(4), ValSizeT, TagT))) alignCmdQs <- replicateM(mkFIFOF);
    
    for (Integer i = 0; i < valueOf(NUM_BUSES); i = i + 1 ) begin

@@ -33,7 +33,7 @@ typedef TDiv#(WordSz, 8) WordBytes;
 
 interface ValDRAMUser;
    method Action readReq(Bit#(64) startAddr, Bit#(64) nBytes);
-   method ActionValue#(WordT) readVal();
+   method ActionValue#(Bit#(256)) readVal();
    
    method Action writeReq(ValstrWriteReqT req);
    method Action writeVal(WordT wrVal);
@@ -67,7 +67,7 @@ module mkValDRAMCtrl(ValDRAMCtrlIFC);
         
    FIFO#(WordT) readRespQ <- mkFIFO();
    
-   Vector#(2,FIFO#(DRAM_LOCK_Req)) dramCmdQs <- replicateM(mkSizedFIFO(32));
+   Vector#(2,FIFO#(DRAM_LOCK_Req)) dramCmdQs <- replicateM(mkFIFO());
    Vector#(2,FIFO#(Bit#(512))) dramDataQs <- replicateM(mkFIFO());
    
    DRAM_LOCK_Arbiter_Bypass#(2) dramArb <- mkDRAM_LOCK_Arbiter_Bypass;
@@ -87,7 +87,7 @@ module mkValDRAMCtrl(ValDRAMCtrlIFC);
    FIFO#(HeaderUpdateReqT) hdrUpdQ <- mkFIFO();
    
   
-   ByteAlignIfc#(Bit#(512), Bit#(0)) align_evict <- mkByteAlignPipeline;
+   ByteAlignIfc#(Bit#(512), Bit#(0)) align_evict <- mkByteAlignCombinational;
    //ByteAlignIfc#(Bit#(512), void) align_evict <- mkByteAlignCombinational_regular;
    mkConnection(align_evict.inPipe, toGet(dramDataQs[1]));
    
@@ -116,7 +116,9 @@ module mkValDRAMCtrl(ValDRAMCtrlIFC);
    //ByteDeAlignIfc#(Bit#(512), Bit#(0)) deAlign <- mkByteDeAlignPipeline();
    //ByteDeAlignIfc#(Bit#(512), Bit#(0)) deAlign <- mkByteDeAlignCombinational();
    //ByteDeAlignIfc#(Bit#(128), Bit#(0)) deAlign <- mkByteDeAlignCombinational();
-   ByteAlignIfc#(Bit#(128), void) align <- mkByteAlignCombinational;
+   //ByteAlignIfc#(Bit#(128), void) align <- mkByteAlignCombinational;
+   ByteAlignIfc#(Bit#(512), void) align <- mkByteAlignCombinational;
+   
    ByteDeAlignIfc#(Bit#(128), void) deAlign <- mkByteDeAlignCombinational_regular();
    
    
