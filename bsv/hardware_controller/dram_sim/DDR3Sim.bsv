@@ -30,22 +30,23 @@ import RegFile::*;
 import Connectable::*;
 import GetPut::*;
 
-//import XilinxVC707DDR3::*;
+import XilinxVC707DDR3::*;
+import DDR3::*;
 
 typedef Bit#(29) DDR3Address;
 typedef Bit#(64) ByteEn;
 typedef Bit#(512) DDR3Data;
 
-interface DDR3_User_VC707_Sim;
+/*interface DDR3_User_VC707_Sim;
    interface Clock clock;
    interface Reset reset_n;
    method Bool init_done;
    method Action request(DDR3Address addr, ByteEn writeen, DDR3Data datain);
    method ActionValue#(DDR3Data) read_data;
-endinterface
+endinterface*/
      
 
-module mkDDR3Simulator(DDR3_User_VC707_Sim);
+module mkDDR3Simulator(DDR3_User_VC707);
    RegFile#(Bit#(26), DDR3Data) data <- mkRegFileFull();
    //Vector#(TExp#(26), Reg#(DDR3Data)) data <- replicateM(mkReg(0));
    FIFO#(DDR3Data) responses <- mkFIFO();
