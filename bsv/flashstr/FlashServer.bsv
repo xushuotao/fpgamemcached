@@ -163,7 +163,7 @@ module mkFlashServer#(FlashCtrlUser flash)(FlashServer);
       Bit#(TLog#(NumChips)) chipId = truncate(dumpRespCnt >> lgBlkOffset);
       Bit#(TLog#(NumBlocksPerChip)) blkId = truncate(dumpRespCnt);
       let v <- blockMap.portB.response.get();
-      if ( blkId >= nextNewBlock[chipId] ) begin
+      if ( extend(blkId) >= nextNewBlock[chipId] ) begin
          dumpRespQ.enq(tuple2(v, True));
       end
       else begin
