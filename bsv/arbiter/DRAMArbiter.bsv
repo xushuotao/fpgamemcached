@@ -9,27 +9,23 @@ import Connectable::*;
 //import Arbiter::*;
 import MyArbiter::*;
 
-import DRAMArbiterTypes::*;
+import DRAMCommon::*;
 import DRAMController::*;
-
-typedef Server#(DRAMReq, Bit#(512)) DRAMServer;
-typedef Client#(DRAMReq, Bit#(512)) DRAMClient;
 
 interface DRAMArbiterIfc#(numeric type numServers);
    interface Vector#(numServers, DRAMServer) dramServers;
    interface DRAMClient dramClient;
 endinterface
+
+interface DRAM_LOCK_Arbiter_Bypass#(numeric type numServers);
+   interface Vector#(numServers, DRAM_LOCK_Server) dramServers;
+   interface DRAM_LOCK_Client dramClient;
+endinterface
+
       
 module mkDRAMArbiter(DRAMArbiterIfc#(numServers));
    
    Arbiter_IFC#(numServers) arbiter <- mkArbiter(False);
-   /*Arbiter_IFC#(numServers) arbiter1 <- mkStickyArbiter;
-   
-   Arbiter_IFC#(numServers) arbiter;
-   if (!sticky)
-      arbiter = arbiter0;
-   else
-      arbiter = arbiter1;*/
    
    Vector#(numServers, FIFOF#(DRAMReq)) reqs<- replicateM(mkFIFOF);
    Vector#(numServers, FIFO#(Bit#(512))) resps<- replicateM(mkFIFO);
@@ -39,61 +35,28 @@ module mkDRAMArbiter(DRAMArbiterIfc#(numServers));
    
    FIFO#(Bit#(TLog#(numServers))) tagQ <- mkSizedFIFO(32);
    
-   Reg#(Bit#(5)) currRespIdx <- mkReg(0);
-   
    
    for (Integer i = 0; i < valueOf(numServers); i = i + 1) begin
       rule doReqs_0 if (reqs[i].notEmpty);
-         //$display("DRAMClient[%d] request for grant", i);
          arbiter.clients[i].request;
       endrule
       
       rule doReqs_1 if (arbiter.grant_id == fromInteger(i));
-         //         let grantid = arbiter.grant_id;
-         //       if ( grantid == fromInteger(i)) begin
          let req <- toGet(reqs[i]).get();
-         //$display("DRAMClient[%d] get grants on arbiter, readReq = %b", grandid, req.rnw);
          cmdQ.enq(req);
          if (req.rnw) begin
             tagQ.enq(fromInteger(i));
          end
-         //     end
       endrule
       
       rule doResp if ( tagQ.first() == fromInteger(i));
          let data = dataQ.first;
-         //let returnTag = tagQ.first();
-         //if ( returnTag == fromInteger(i)) begin
-         //$display("DRAMClient[%d] get back on readReq, data = %h", returnTag, data);
          resps[i].enq(data);
-         //resps[0].enq(data);
          tagQ.deq();
          dataQ.deq();
-        // end
       endrule
    end
    
-   /*rule doReqs_1;
-      let grandid = arbiter.grant_id;
-      let req <- toGet(reqs[grandid]).get();
-      //$display("DRAMClient[%d] get grants on arbiter, readReq = %b", grandid, req.rnw);
-      cmdQ.enq(req);
-      if (req.rnw) begin
-         tagQ.enq(grandid);
-      end
-   endrule
-
-   rule doResp;
-      let data = dataQ.first;
-      let returnTag = tagQ.first();
-      //$display("DRAMClient[%d] get back on readReq, data = %h", returnTag, data);
-      resps[returnTag].enq(data);
-      //resps[0].enq(data);
-      tagQ.deq();
-      dataQ.deq();
-   endrule*/
-   
-      
    
    Vector#(numServers, DRAMServer) ds;
    for (Integer i = 0; i < valueOf(numServers); i = i + 1)
@@ -110,23 +73,119 @@ module mkDRAMArbiter(DRAMArbiterIfc#(numServers));
    endinterface
       
 endmodule
-           
-instance Connectable#(DRAMClient, DRAMControllerIfc);
-   module mkConnection#(DRAMClient dramClient, DRAMControllerIfc dram)(Empty);
-      rule doCmd;
-         let req <- dramClient.request.get();
-         if (req.rnw) 
-            dram.readReq(req.addr, req.numBytes);
-         else
-            dram.write(req.addr, req.data, req.numBytes);
-      endrule
-   
-      rule doData;
-         //$display("DRAM Arbiter got read value from DRAMController at %t",$time);
-         let v <- dram.read;
-         dramClient.response.put(v);
-      endrule
-   endmodule
-endinstance
 
+module mkDRAM_LOCK_Arbiter_Bypass(DRAM_LOCK_Arbiter_Bypass#(numServers));
+   
+   Arbiter_IFC#(numServers) arbiter <- mkArbiter(False);
+   
+   Vector#(numServers, FIFOF#(DRAM_LOCK_Req)) reqs<- replicateM(mkFIFOF);
+   Vector#(numServers, FIFO#(Bit#(512))) resps<- replicateM(mkFIFO);
+   
+   FIFO#(DRAM_LOCK_Req) cmdQ <- mkFIFO;
+   FIFO#(Bit#(512)) dataQ <- mkFIFO;
+   
+   FIFO#(Bit#(TLog#(numServers))) tagQ <- mkSizedFIFO(32);
+   
+   
+   for (Integer i = 0; i < valueOf(numServers); i = i + 1) begin
+      rule doReqs_0 if (reqs[i].notEmpty);
+         arbiter.clients[i].request;
+      endrule
+      
+      rule doReqs_1 if (arbiter.grant_id == fromInteger(i));
+         let req <- toGet(reqs[i]).get();
+         cmdQ.enq(req);
+         if (req.rnw) begin
+            tagQ.enq(fromInteger(i));
+         end
+      endrule
+      
+      rule doResp if ( tagQ.first() == fromInteger(i));
+         let data = dataQ.first;
+         resps[i].enq(data);
+         tagQ.deq();
+         dataQ.deq();
+      endrule
+   end
+   
+   
+   Vector#(numServers, DRAM_LOCK_Server) ds;
+   for (Integer i = 0; i < valueOf(numServers); i = i + 1)
+      ds[i] = (interface DRAM_LOCK_Server;
+                  interface Put request = toPut(reqs[i]);
+                  interface Get response = toGet(resps[i]);
+               endinterface);
+   
+   interface dramServers = ds;
+   
+   interface DRAM_LOCK_Client dramClient;
+      interface Get request = toGet(cmdQ);
+      interface Put response = toPut(dataQ);
+   endinterface
+      
+endmodule
+
+typedef DRAM_LOCK_Arbiter_Bypass#(2) DRAM_LOCK_Biased_Arbiter;
+
+module mkDRAM_LOCK_Biased_Arbiter_Bypass(DRAM_LOCK_Biased_Arbiter);
+   
+   Arbiter_IFC#(2) arbiter <- mkArbiter(True);
+   
+   Vector#(2, FIFOF#(DRAM_LOCK_Req)) reqs<- replicateM(mkFIFOF);
+   Vector#(2, FIFO#(Bit#(512))) resps<- replicateM(mkFIFO);
+   
+   FIFO#(DRAM_LOCK_Req) cmdQ <- mkFIFO;
+   FIFO#(Bit#(512)) dataQ <- mkFIFO;
+   
+   FIFO#(Bit#(1)) tagQ <- mkSizedFIFO(32);
+   
+   
+
+   rule doReqs_0 if (reqs[0].notEmpty);
+      arbiter.clients[0].request;
+   endrule
+   
+   rule doReqs_1 if (reqs[1].notEmpty);
+      if ( !reqs[0].notEmpty ) begin
+         arbiter.clients[1].request;
+      end
+   endrule
+   
+   for (Integer i = 0; i < 2; i = i + 1) begin      
+      rule doDeqReqs if (arbiter.grant_id == fromInteger(i));
+         let req <- toGet(reqs[i]).get();
+         cmdQ.enq(req);
+         if (req.rnw) begin
+            tagQ.enq(fromInteger(i));
+         end
+      endrule
+      
+      rule doResp if ( tagQ.first() == fromInteger(i));
+         let data = dataQ.first;
+         resps[i].enq(data);
+         tagQ.deq();
+         dataQ.deq();
+      endrule
+   end
+   
+   
+   Vector#(numServers, DRAM_LOCK_Server) ds;
+   for (Integer i = 0; i < 2; i = i + 1)
+      ds[i] = (interface DRAM_LOCK_Server;
+                  interface Put request = toPut(reqs[i]);
+                  interface Get response = toGet(resps[i]);
+               endinterface);
+   
+   interface dramServers = ds;
+   
+   interface DRAM_LOCK_Client dramClient;
+      interface Get request = toGet(cmdQ);
+      interface Put response = toPut(dataQ);
+   endinterface
+      
+endmodule
+
+
+           
 endpackage
+

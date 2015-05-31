@@ -9,7 +9,7 @@ import ClientServer::*;
 import Connectable::*;
 
 import HtArbiterTypes::*;
-import DRAMArbiterTypes::*;
+import DRAMCommon::*;
 import DRAMArbiter::*;
 import Scoreboard::*;
 import MyArbiter::*;
@@ -36,6 +36,7 @@ interface HtArbiterIfc;
    interface DRAMWriteIfc hdrWr;
    interface DRAMWriteIfc keyWr;
    interface DRAMClient dramClient;
+   interface Server#(DRAMReq, Bool) hdrUpdServer;
 endinterface
 
 module mkHtArbiter(HtArbiterIfc);
@@ -67,7 +68,7 @@ module mkHtArbiter(HtArbiterIfc);
    Vector#(4, FIFO#(DRAMReq)) ddrCmdQs <- replicateM(mkFIFO());
    FIFO#(Bit#(2)) selQ <- mkFIFO();
    
-   FIFO#(DRAMReq) dramCmdQ <- mkFIFO;
+   FIFOF#(DRAMReq) dramCmdQ <- mkFIFOF;
    FIFO#(Bit#(1)) tagQ <- mkSizedFIFO(32);
    FIFO#(Bit#(512)) dramDataQ <- mkSizedFIFO(32);
    
@@ -374,6 +375,26 @@ module mkHtArbiter(HtArbiterIfc);
       endrule
    end
          
+   FIFOF#(DRAMReq) hdrUpdDRAMReqQ <- mkBypassFIFOF;
+   FIFO#(Bool) hdrUpdRespQ <- mkFIFO;
+   
+   FIFO#(DRAMReq) dramReqQ <- mkFIFO;
+   Vector#(2, FIFOF#(DRAMReq)) dramReqQs;
+   dramReqQs[0] = dramCmdQ;
+   dramReqQs[1] = hdrUpdDRAMReqQ;
+   
+   Arbiter_IFC#(2) arbiter <- myArbiter#(False);
+   for ( Integer i = 0; i < 2; i = i + 1) begin
+      rule doReq if ( dramReqQs.notFull );
+         arbiters.clients[i].request();
+      endrule
+      
+      rule doReq_1 if (arbiter.clients[i].grant);
+         let v <- toGet(dramReqQs[i]).get();
+         dramReqQ.enq(v);
+         if ( i = 1 ) hdrUpdRespQ.enq(True);
+      endrule
+   end
       
    
    interface DRAMReadIfc hdrRd;
@@ -414,10 +435,14 @@ module mkHtArbiter(HtArbiterIfc);
    endinterface
   
    interface DRAMClient dramClient;
-      interface Get request = toGet(dramCmdQ);
+      interface Get request = toGet(dramReqQ);
       interface Put response = toPut(dramDataQ);
    endinterface
 
+   interface Server hdrUpdServer;
+      interface Put request = toPut(hdrUpdDRAMReqQ);
+      interface Get response = toGet(hdrUpdRespQ);
+   endinterface
 endmodule
 
 
