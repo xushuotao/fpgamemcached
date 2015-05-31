@@ -8,6 +8,13 @@ import SerDes::*;
 //import Packet::*;
 //`define DEBUG
 
+//`ifdef Debug
+//Bool debug = True;
+//`else
+Bool debug = False;
+//`endif
+
+
 interface JenkinsHashIfc;
    method Action start(Bit#(32) length);
    method Action putKey(Bit#(64) key);
@@ -67,7 +74,7 @@ module mkDataAlign(DataAlignIfc);
       let byteMax = byteMaxQ.first();
       let v <- des.getVal;
       let d = tpl_1(v);
-      $display("Got d = %h", d);
+      if (debug) $display("Got d = %h", d);
       if (byteCnt + 24 < byteMax) begin
          ser.marshall(d, 2,?);
          byteCnt <= byteCnt + 24;
@@ -166,8 +173,8 @@ module mkMixStage#(Integer stage_id)(MixStageIfc);
       method Action put(MixStageType args);
           if ( args.stageId == fromInteger(myStage)) begin
              if ( !args.toFinal ) begin
-                $display("\x1b[32mHardware:: Mix_phase[%d], a = %h, b = %h, k[2] = %h\x1b[0m", myStage, args.a, args.b, args.c);
-                $display("\x1b[32mHardware:: Mix_phase[%d], k[0] = %h, k[1] = %h, k[2] = %h\x1b[0m", myStage, args.k0, args.k1, args.k2);
+                if (debug) $display("\x1b[32mHardware:: Mix_phase[%d], a = %h, b = %h, k[2] = %h\x1b[0m", myStage, args.a, args.b, args.c);
+                if (debug) $display("\x1b[32mHardware:: Mix_phase[%d], k[0] = %h, k[1] = %h, k[2] = %h\x1b[0m", myStage, args.k0, args.k1, args.k2);
            
                 let a = args.a + args.k0;
                 let b = args.b + args.k1;
@@ -181,8 +188,8 @@ module mkMixStage#(Integer stage_id)(MixStageIfc);
                 args.a = a;
                 args.b = b;
                 args.c = c;
-                /*$display("\x1b[32mHardware:: Mix_phase[%d], a = %h, b = %h, k[2] = %h\x1b[0m", myStage, args.a, args.b, args.c);
-                $display("\x1b[32mHardware:: Mix_phase[%d], k[0] = %h, k[1] = %h, k[2] = %h\x1b[0m", myStage, args.k0, args.k1, args.k2);*/
+                /*if (debug) $display("\x1b[32mHardware:: Mix_phase[%d], a = %h, b = %h, k[2] = %h\x1b[0m", myStage, args.a, args.b, args.c);
+                if (debug) $display("\x1b[32mHardware:: Mix_phase[%d], k[0] = %h, k[1] = %h, k[2] = %h\x1b[0m", myStage, args.k0, args.k1, args.k2);*/
              end
              else begin
                 let c = args.c + args.k2;
@@ -191,8 +198,8 @@ module mkMixStage#(Integer stage_id)(MixStageIfc);
                 args.a = a;
                 args.b = b;
                 args.c = c;
-                $display("\x1b[32mHardware:: Final_mix[%d], a = %h, b = %h, c = %h\x1b[0m", myStage, a, b, c);      
-                $display("\x1b[32mHardware:: Final_mix[%d], k[0] = %h, k[1] = %h, k[2] = %h\x1b[0m", myStage, args.k0, args.k1, args.k2);
+                if (debug) $display("\x1b[32mHardware:: Final_mix[%d], a = %h, b = %h, c = %h\x1b[0m", myStage, a, b, c);      
+                if (debug) $display("\x1b[32mHardware:: Final_mix[%d], k[0] = %h, k[1] = %h, k[2] = %h\x1b[0m", myStage, args.k0, args.k1, args.k2);
 
              end
           end
@@ -237,7 +244,7 @@ module mkMixEng(MixEngIfc);
       let keys <- toGet(keyFifo).get();
       Bit#(32) init = 32'hdeadbeef + lenMax;
       Vector#(3, Bit#(32)) k = unpack(keys);
-      $display("\x1b[32mJenkins[reqId = %d]:: Mix_phase, key0 = %h, key1 = %h, key2 = %h\x1b[0m", tpl_2(lenQ.first()), k[0] , k[1], k[2]);
+      if (debug) $display("\x1b[32mJenkins[reqId = %d]:: Mix_phase, key0 = %h, key1 = %h, key2 = %h\x1b[0m", tpl_2(lenQ.first()), k[0] , k[1], k[2]);
       if ( lenCnt + 12 >= lenMax) begin
          mixStages[0].request.put(MixStageType{a:init, b:init, c:init, k0:k[0], k1:k[1], k2:k[2], stageId: stageCnt, toFinal: True});
          lenCnt <= 0;
@@ -257,7 +264,7 @@ module mkMixEng(MixEngIfc);
       let args <- mixStages[21].response.get;
       if (args.toFinal) begin
          reqCnt_2 <= reqCnt_2 + 1;
-         $display("\x1b[32mJenkins[reqId = %d] mixEngs get result, stageId = %d, a = %h, b = %h, c = %h, toFinal = %b\x1b[0m", reqCnt_2, args.stageId, args.a, args.b, args.c, args.toFinal);
+         if (debug) $display("\x1b[32mJenkins[reqId = %d] mixEngs get result, stageId = %d, a = %h, b = %h, c = %h, toFinal = %b\x1b[0m", reqCnt_2, args.stageId, args.a, args.b, args.c, args.toFinal);
          outputFifo.enq(tuple4(args.a, args.b, args.c, !args.toFinal));
       end
    endrule
@@ -293,7 +300,7 @@ module mkFinalMixEng(FinalMixEngIfc);
       let old_c = tpl_5(d);
       
       reqCnt <= reqCnt + 1;
-      $display("\x1b[32mJenkins[reqId = %d]:: Final_phase, a = %h, b = %h, c = %h, old_c = %h, flag = %b\x1b[0m", reqCnt, a, b, c, old_c, flag);
+      if (debug) $display("\x1b[32mJenkins[reqId = %d]:: Final_phase, a = %h, b = %h, c = %h, old_c = %h, flag = %b\x1b[0m", reqCnt, a, b, c, old_c, flag);
 
       if (!flag) begin
          c = c^b; c = c-rot(b,16);
@@ -314,7 +321,7 @@ module mkFinalMixEng(FinalMixEngIfc);
          let b = tpl_2(v);
          let c = tpl_3(v);
          let skip = tpl_4(v);
-         //$display("\x1b[32mHardware:: Final_phase, a = %h, b = %h, c = %h\x1b[0m", a, b, c);
+         //if (debug) $display("\x1b[32mHardware:: Final_phase, a = %h, b = %h, c = %h\x1b[0m", a, b, c);
          c = c^b; c = c-rot(b,14);
          a = a^c; a = a-rot(c,11);
          b = b^a; b = b-rot(a,25);
@@ -352,7 +359,7 @@ module mkJenkinsHash (JenkinsHashIfc);
    method ActionValue#(Bit#(32)) getHash();
       respCnt <= respCnt + 1;
       let v <- final_mixEng.response.get();
-      $display("Jenkins got hash, reqId = %d, hash = %h", respCnt, v);
+      if (debug) $display("Jenkins got hash, reqId = %d, hash = %h", respCnt, v);
       return v;
    endmethod
       
@@ -403,9 +410,9 @@ module mkMixStage_192#(Integer stageId)(MixStageIfc_192);
          v.b = d.b;
          v.c = d.c;
    
-         //$display("StageId = %d, %d,%d", stageId, v.stageId, d.stageId);
+         //if (debug) $display("StageId = %d, %d,%d", stageId, v.stageId, d.stageId);
          if (v.stageId == fromInteger(2*stageId + 2)) begin
-            //$display("You suck");
+            //if (debug) $display("You suck");
             v.a = regV[0];
             v.b = regV[1];
             v.c = regV[2];
@@ -429,6 +436,7 @@ interface MixEngIfc_192;
    interface Put#(Bit#(32)) startQ;
    interface Put#(Bit#(192)) request;
    interface Get#(Tuple4#(Bit#(32), Bit#(32), Bit#(32), Bool)) response;
+   method Action seed(Bit#(32) v);
 endinterface
 
 
@@ -451,12 +459,13 @@ module mkMixEng_192(MixEngIfc_192);
    FIFO#(Bit#(192)) keyFifo <- mkFIFO();
    FIFO#(Tuple4#(Bit#(32), Bit#(32), Bit#(32), Bool)) outputFifo <- mkBypassFIFO();
    
-
+   Reg#(Bit#(32)) seedReg <- mkReg(32'hdeadbeef);
    
    rule sendToPipe;
       let lenMax = tpl_1(lenQ.first());
       let keys <- toGet(keyFifo).get();
-      Bit#(32) init = 32'hdeadbeef + lenMax;
+      //Bit#(32) init = 32'hdeadbeef + lenMax;
+      Bit#(32) init = seedReg + lenMax;
       Vector#(6, Bit#(32)) k = unpack(keys);
       
       Vector#(2, MixStageType) args;
@@ -490,7 +499,7 @@ module mkMixEng_192(MixEngIfc_192);
       let args <- mixStages[10].response.get;
       if (args[0].toFinal || args[1].toFinal) begin
          reqCnt_2 <= reqCnt_2 + 1;
-         //$display("\x1b[32mJenkins[reqId = %d] mixEngs get result, stageId = %d, a = %h, b = %h, c = %h, toFinal = %b\x1b[0m", reqCnt_2, args.stageId, args.a, args.b, args.c, args.toFinal);
+         //if (debug) $display("\x1b[32mJenkins[reqId = %d] mixEngs get result, stageId = %d, a = %h, b = %h, c = %h, toFinal = %b\x1b[0m", reqCnt_2, args.stageId, args.a, args.b, args.c, args.toFinal);
          outputFifo.enq(tuple4(args[1].a, args[1].b, args[1].c, False));
       end
    endrule
@@ -504,6 +513,9 @@ module mkMixEng_192(MixEngIfc_192);
    
    interface Put request = toPut(keyFifo);
    interface Get response = toGet(outputFifo);
+   method Action seed(Bit#(32) v);
+      seedReg <= v;
+   endmethod
 endmodule
 
 
@@ -515,7 +527,7 @@ interface DataAlign_192_Ifc;
 endinterface
 
 module mkDataAlign_192(DataAlign_192_Ifc);
-   FIFO#(Bit#(128)) keyFifo <- mkFIFO;
+   FIFO#(Bit#(128)) keyFifo <- mkSizedFIFO(4);
 
    Reg#(Bit#(32)) cnt <- mkReg(0);
    Reg#(Bit#(32)) maxByte <- mkReg(0);
@@ -549,7 +561,7 @@ module mkDataAlign_192(DataAlign_192_Ifc);
       let byteMax = byteMaxQ.first();
       let v <- des.getVal;
       let d = tpl_1(v);
-      $display("Got d = %h", d);
+      if (debug) $display("Got d = %h", d);
       if (byteCnt + 48 < byteMax) begin
          ser.marshall(d, 2,?);
          byteCnt <= byteCnt + 48;
@@ -578,7 +590,7 @@ module mkDataAlign_192(DataAlign_192_Ifc);
    interface Get response;
       method ActionValue#(Bit#(192)) get();
          let v <- ser.getVal;
-         //$display("here");
+         //if (debug) $display("here");
          return tpl_1(v);
       endmethod
    endinterface
@@ -588,14 +600,16 @@ endmodule
 
 interface JenkinsHash_128_Ifc;
    method Action start(Bit#(32) length);
-   method Action putKey(Bit#(128) key);
-   method ActionValue#(Bit#(32)) getHash();
+   //method Action putKey(Bit#(128) key);
+   interface Put#(Bit#(128)) inPipe;
+   //method ActionValue#(Bit#(32)) getHash();
+   interface Get#(Bit#(32)) response;
+   method Action seed(Bit#(32) v);
 endinterface
 
-module mkJenkinsHash_128 (JenkinsHash_128_Ifc);
-   
-   //FIFO#(Bit#(32)) hashFifo <- mkFIFO;
-   
+(*synthesize*)
+module mkJenkinsHash_128(JenkinsHash_128_Ifc);
+      
    let dataAlign <- mkDataAlign_192;
    let mixEng <- mkMixEng_192;
    let final_mixEng <- mkFinalMixEng;
@@ -607,19 +621,12 @@ module mkJenkinsHash_128 (JenkinsHash_128_Ifc);
    Reg#(Bit#(16)) respCnt <- mkReg(0);
    method Action start(Bit#(32) length);
       dataAlign.start(length);
-      //mixEng.start(length);
    endmethod 
  
-   method Action putKey(Bit#(128) key);
-      dataAlign.request.put(key);
-   endmethod
-
+   interface Put inPipe = dataAlign.request;
+   interface Get response = final_mixEng.response;
    
-   method ActionValue#(Bit#(32)) getHash();
-      respCnt <= respCnt + 1;
-      let v <- final_mixEng.response.get();
-      $display("Jenkins got hash, reqId = %d, hash = %h", respCnt, v);
-      return v;
+   method Action seed(Bit#(32) v);
+      mixEng.seed(v);
    endmethod
-      
 endmodule
