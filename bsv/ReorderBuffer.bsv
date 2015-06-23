@@ -2,18 +2,20 @@ import Cntrs::*;
 import FIFOVector::*;
 import FIFO::*;
 import GetPut::*;
-
+import ControllerTypes::*;
+import Connectable::*;
+import ClientServer::*;
 
 interface ReorderBuffer;
    method Action enqReq(TagT tag, Bit#(21) nBytes);
    interface Put#(Tuple2#(Bit#(128), Bool)) inPipe;
-   method Action deqReq(TagT tag);
+   method Action deqReq(TagT tag, Bit#(21) nBytes);
    interface Get#(Tuple2#(Bit#(128), Bool)) outPipe;
 endinterface
 
 module mkReorderBuffer(ReorderBuffer);
    FIFOVector#(128, Bit#(7), 128) sndQIds <- mkBRAMFIFOVector();
-   FIFOVector#(128, Bit#(128), 16) fifos <- mkBRAMFIFOVector();
+   FIFOVector#(128, Tuple2#(Bit#(128),Bool), 16) fifos <- mkBRAMFIFOVector();
    FIFO#(Bit#(7)) freeSndQId <- mkSizedFIFO(128);
 
    Reg#(Bit#(7)) initCnt <- mkReg(0);
@@ -32,9 +34,10 @@ module mkReorderBuffer(ReorderBuffer);
    endrule
  
    Reg#(Bit#(21)) byteCnt_wr <- mkReg(0);
+   FIFO#(Tuple2#(Bit#(128), Bool)) inDtaQ <- mkFIFO();
    
    rule doEnqData if ( initialized);
-      let d <- toGet(inDta).get();
+      let d <- toGet(inDtaQ).get();
 
       let v = enqReqQ.first();
       let tag_req = tpl_1(v);
@@ -62,15 +65,16 @@ module mkReorderBuffer(ReorderBuffer);
    
    
    Reg#(Bit#(8)) bufCnt <- mkReg(0);
-   rule doDeqReq if (initialzed);
+   FIFO#(Tuple2#(TagT, Bit#(21))) deqReqQ <- mkFIFO;
+   rule doDeqReq if (initialized);
       let v = deqReqQ.first();
       let tag = tpl_1(v);
       let nBytes = tpl_2(v);
       let nBufs = nBytes/256;
       if ( nBytes%256 == 0) nBufs = nBufs + 1;
 
-      sndQIds.deq(tag);
-      if ( bufCnt + 1 < nBufs ) begin
+      sndQIds.deqServer.request.put(tag);
+      if ( extend(bufCnt) + 1 < nBufs ) begin
          bufCnt <= bufCnt + 1;
       end
       else begin
@@ -82,16 +86,16 @@ module mkReorderBuffer(ReorderBuffer);
    FIFO#(Bit#(7)) fifoIdQ <- mkFIFO();
    mkConnection(toPut(fifoIdQ), sndQIds.deqServer.response);
    
-   Reg#(Bit#(11)) byteCnt_rd <- mkReg(0);
-   
+   Reg#(Bit#(21)) byteCnt_rd <- mkReg(0);
+   FIFO#(Bit#(21)) deqBytesQ <- mkFIFO();
    rule doDeqData if (initialized);
       let nBytes = deqBytesQ.first;
 
-      let tag_fifo = freeIdQ.first();
+      let tag_fifo = fifoIdQ.first();
 
       Bool fifoIdQ_en = (byteCnt_rd%256 == 255);
      
-      fifos.deqServer.request(tag_fifo);
+      fifos.deqServer.request.put(tag_fifo);
       
       if (byteCnt_rd +16 >= nBytes) begin
          deqBytesQ.deq();
@@ -105,7 +109,7 @@ module mkReorderBuffer(ReorderBuffer);
       if ( fifoIdQ_en) begin
          //freeIdQ.deq;
          fifoIdQ.deq();
-         freeIdQ.enq(tag_fifo);
+         freeSndQId.enq(tag_fifo);
       end
    endrule
    

@@ -4,6 +4,7 @@ import GetPut::*;
 import ClientServer::*;
 import FIFO::*;
 import Vector::*;
+import ControllerTypes::*;
 
 
 interface FIFOVector#(numeric type n, type t, numeric type depth);
@@ -17,7 +18,9 @@ module mkBRAMFIFOVector(FIFOVector#(n, t, depth))
             Log#(depth1, sz),
             Add#(sz, 1, sz1),
             Log#(n, nlog),
-            Log#(depth, depthlog));
+            Log#(depth, depthlog),
+            Add#(a__, TLog#(n), TAdd#(nlog, depthlog)),
+            Add#(a__, sz1, TAdd#(nlog, depthlog)));
    
    Integer depthi = valueOf(depth);
    Bit#(sz1) nb = fromInteger(depthi);
@@ -27,6 +30,7 @@ module mkBRAMFIFOVector(FIFOVector#(n, t, depth))
    Vector#(n,Reg#(Bit#(sz1))) deqP <- replicateM(mkReg(0));
    
    BRAM2Port#(Bit#(TAdd#(nlog, depthlog)), t) fifostore <- mkBRAM2Server(defaultValue);
+   FIFO#(Tuple2#(Bit#(TLog#(n)), t)) enqReqQ <- mkFIFO();
    FIFO#(Bit#(TLog#(n))) deqReqQ <- mkFIFO();
    
    Vector#(n, Bit#(sz1)) cnt;
@@ -44,15 +48,28 @@ module mkBRAMFIFOVector(FIFOVector#(n, t, depth))
    endfunction
    
    FIFO#(Bool) validQ <- mkFIFO();
-   rule doDeq if (cnt[0] != 0);//( notEmpty(deqReqQ.first) );
-      let idx <- toGet(deqReqQ).get;
+   
+   rule doEnq if (cnt[tpl_1(enqReqQ.first)] < nb);
+      let v <- toGet(enqReqQ).get();
+      let tag = tpl_1(v);
+      let data = tpl_2(v);
+      enqP[tag] <= (enqP[tag] + 1)%n2;
+      fifostore.portA.request.put(BRAMRequest{write:True,
+                                              responseOnWrite: False,
+                                              address: (extend(tag) << valueOf(nlog)) + extend(enqP[tag]%nb),
+                                              datain: data});
+   endrule
+      
+         
+   rule doDeq if (cnt[deqReqQ.first] != 0);//( notEmpty(deqReqQ.first) );
+      let tag <- toGet(deqReqQ).get;
       //let idx = deqReqQ.first;
       //if ( notEmpty(idx) ) begin
       fifostore.portB.request.put(BRAMRequest{write:False,
                                               responseOnWrite: False,
-                                              address: (extend(tag) << valueOf(nlog)) + extend(depP[tag]%nb),
-                                              data: ?});
-      depP[tag] <= (depP[tag] + 1)%n2;
+                                              address: (extend(tag) << valueOf(nlog)) + extend(deqP[tag]%nb),
+                                              datain: ?});
+      deqP[tag] <= (deqP[tag] + 1)%n2;
       //deqReq.deq();
          //validQ.enq(True);
       //end
@@ -63,12 +80,13 @@ module mkBRAMFIFOVector(FIFOVector#(n, t, depth))
 
    
    
-   method Action enq(Bit#(TLog#(n)) tag, t data) if (cnt[tag] < nb);
-      enqP[tag] <= (enqP[tag] + 1)%n2;
+   method Action enq(Bit#(TLog#(n)) tag, t data);// if (cnt[tag] < nb);
+      /*enqP[tag] <= (enqP[tag] + 1)%n2;
       fifostore.portA.request.put(BRAMRequest{write:True,
                                               resposeOnWrite: False,
                                               address: (extend(tag) << valueOf(nlog)) + extend(enqP[tag]%nb),
-                                              data: t});
+                                              datain: t});*/
+      enqReqQ.enq(tuple2(tag,data));
    endmethod
    
    interface Server deqServer;
