@@ -13,6 +13,7 @@ interface ReorderBuffer;
    interface Get#(Tuple2#(Bit#(128), Bool)) outPipe;
 endinterface
 
+(*synthesize*)
 module mkReorderBuffer(ReorderBuffer);
    FIFOVector#(128, Bit#(7), 128) sndQIds <- mkBRAMFIFOVector();
    FIFOVector#(128, Tuple2#(Bit#(128),Bool), 16) fifos <- mkBRAMFIFOVector();
@@ -44,9 +45,9 @@ module mkReorderBuffer(ReorderBuffer);
       let nBytes = tpl_2(v);
 
       let tag_fifo = freeSndQId.first();
-      Bool fifoIdQ_en =  (byteCnt_wr%256 == 255);
+      Bool fifoIdQ_en =  (byteCnt_wr%256 == 240);
 
-      if ( nBytes%256 == 0 )
+      if ( byteCnt_wr%256 == 0 )
          sndQIds.enq(tag_req, tag_fifo); 
       
       fifos.enq(tag_fifo, d);
@@ -59,8 +60,12 @@ module mkReorderBuffer(ReorderBuffer);
       else begin
          byteCnt_wr <= byteCnt_wr + 16;
       end
+      $display("%m, doEnqData, byteCnt_wr = %d, fifoIdQ_en = %b", byteCnt_wr, fifoIdQ_en);
       
-      if ( fifoIdQ_en) freeSndQId.deq;
+      if ( fifoIdQ_en) begin
+         freeSndQId.deq;
+         $display("deq freeSndId tag = %d", tag_fifo);
+      end
    endrule
    
    
@@ -71,7 +76,7 @@ module mkReorderBuffer(ReorderBuffer);
       let tag = tpl_1(v);
       let nBytes = tpl_2(v);
       let nBufs = nBytes/256;
-      if ( nBytes%256 == 0) nBufs = nBufs + 1;
+      if ( nBytes%256 != 0) nBufs = nBufs + 1;
 
       sndQIds.deqServer.request.put(tag);
       if ( extend(bufCnt) + 1 < nBufs ) begin
@@ -93,7 +98,7 @@ module mkReorderBuffer(ReorderBuffer);
 
       let tag_fifo = fifoIdQ.first();
 
-      Bool fifoIdQ_en = (byteCnt_rd%256 == 255);
+      Bool fifoIdQ_en = (byteCnt_rd%256 == 240);
      
       fifos.deqServer.request.put(tag_fifo);
       
