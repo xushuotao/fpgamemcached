@@ -18,27 +18,57 @@ import AuroraExtArbiterBar::*;
 import AuroraExtEndpoint::*;
 import AuroraExtImport::*;
 
+typedef Bit#(5) NodeT;
+
+typedef struct{
+   Bit#(32) hv_val;
+   Bit#(32) hv_idx;
+   Bit#(21) bodylen;
+   TagT tag;
+   } ReqHeaderEndT deriving (Bits, Eq);
+
+typedef struct{
+   Bit#(32) hv_val;
+   Bit#(32) hv_idx;
+   Bit#(21) bodylen;
+   NodeT dstNode;
+   TagT tag;
+   } ReqHeaderT deriving (Bits, Eq);
+               
+
 interface RouterIfc;
-   method Action sendReq(Bit#(32) length, Bit#(5) nodeId);
-   method ActionValue#(Bit#(5)) sendAck();
-   method Action sendDta(Bit#(128) packet, Bit#(5) nodeId);
-   //interface Vector#(tEndpointCount, AuroraEndpointCmdIfc) endpoints;
+   interface Put#(ReqHeaderT) sendReq;
+   interface Get#(ReqHeaderT) recvReq;
+   interface Put#(Tuple2#(Bit#(128), Bool)) dataInQ;
+   interface Get#(Tuple2#(Bit#(128), Bool)) dataOutQ;
 endinterface
 
 module mkRouter(Vector#(tExtCount, AuroraExtUserIfc) extPorts);
-   AuroraEndpointIfc#(Bit#(32)) sendReq_end <- mkAuroraEndpointStatic(32, 4);
+   AuroraEndpointIfc#(ReqHeaderEndT) sendReq_end <- mkAuroraEndpointStatic(32, 4);
    AuroraEndpointIfc#(Bool) sendAck_end <- mkAuroraEndpointStatic(32, 4);
    AuroraEndpointIfc#(Bit#(128)) sendDta_end <- mkAuroraEndpointStatic(128, 64);
+
    let auroraList = cons(sendDta_end.cmd, cons(sendAck_end.cmd, cons(sendReq_end.cmd, nil)));
    AuroraExtArbiterBarIfc auroraExtArbiter <- mkAuroraExtArbiterBar(auroraExt119.user, auroraList);
+   
+   Reg#(NodeT) myNodeId <- mkRegU();
+   Reg#(Bool) initialized <- mkReg(False);
+   
+   FIFO#(ReqHeaderT) sendReqQ <- mkFIFO();
 
-   method Action sendReq(Bit#(32) length, Bit#(5) nodeId);
-      sendReq_end.user.send(length, extend(nodeId))
-   endmethod
-   method ActionValue#(Bit#(5)) sendAck();
-      let data <- sendAck_end.user.receive();
-      return truncate(tpl_2(data));
-   endmethod
-   method Action sendDta(Bit#(128) packet, Bit#(5) nodeId);
-   endmethod
+   rule doSendReq;
+      let req <- toGet(sendReqQ).get();
+      if ( req.disNode == myNodeId ) begin
+         //local
+      end
+      else begin
+         sendReq_end.user.send(ReqHeaderEndT{hv_val:req.hv_val, hv_idx: req.hv_idx, bodylen: req.bodylen, tag:req.tag}, req.dstNode);
+      end
+   endrule
+
+   
+   interface Put sendReq = toPut(sendReqQ);
+   interface Get recvReq;
+   interface Put dataInQ;
+   interface Get dataOutQ;
 endmodule
