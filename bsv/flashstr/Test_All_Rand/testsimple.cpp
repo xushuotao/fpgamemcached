@@ -189,7 +189,7 @@ int main(int argc, const char **argv)
   std::vector<uint64_t> addrVec;
 
   //int maxSz = 1<<13;//(1 << 20);
-  int maxSz = (1 << 20)*3;
+  int maxSz = (1 << 20)*4;
   dataBuf = new char[maxSz];
  
   addr = 0;
@@ -198,8 +198,8 @@ int main(int argc, const char **argv)
   int pageSize = (1 << 13);
   do {
     
-    //numBytes = rand()%pageSize+1;
-    numBytes = pageSize;
+    numBytes = rand()%pageSize+1;
+    //numBytes = pageSize;
 
     if (pageCnt + numBytes >= pageSize){
       numBytes = pageSize - pageCnt;

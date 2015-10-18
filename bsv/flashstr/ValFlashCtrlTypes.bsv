@@ -12,6 +12,8 @@ import MemcachedTypes::*;
 import GetPut::*;
 import Connectable::*;
 
+import TagAlloc::*;
+
 typedef 8192 PageSz;
 
 typedef TMul#(NumTags,PageSz) SuperPageSz;
@@ -132,6 +134,7 @@ interface FlashValueStoreIfc;
    interface DRAM_LOCK_Client dramClient;
    interface FlashRawWriteClient flashRawWrClient;
    interface FlashRawReadClient flashRawRdClient;
+   interface TagClient tagClient;
    //interface FlashPins flashPins;
 endinterface
 

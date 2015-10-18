@@ -39,7 +39,7 @@ import ValFlashCtrlTypes::*;
 import DRAMPartioner::*;
 import SerDes::*;
 import FlashValueStore::*;
-import WriteBuffer::*;
+//import WriteBuffer::*;
 
 interface SimpleIndication;
    method Action getVal(Bit#(64) v, Bit#(32) tag);

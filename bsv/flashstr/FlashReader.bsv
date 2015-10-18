@@ -23,11 +23,13 @@ import ClientServer::*;
 import ClientServerHelper::*;
 import Connectable::*;
 
+import ReorderBuffer::*;
+
 typedef struct{
    TagT reqId;
    FlashAddrType baseAddr;
    ValSizeT numBytes;
-   Bit#(TLog#(NumPagesPerSuperPage)) numPages;
+   Bit#(TAdd#(TLog#(NumPagesPerSuperPage),1)) numPages;
    } ReadPipeT deriving (Bits, Eq);
 
 
@@ -58,6 +60,8 @@ module mkFlashReader(FlashReaderIFC);
    FIFO#(FlashCmd) flashReqQ <- mkFIFO();
    FIFO#(Tuple2#(Bit#(128), TagT)) flashRespQ <- mkFIFO();
    
+   ReorderBuffer_Flash reorderbuf <- mkReorderBuffer_Flash();
+   
    rule doReaderCmd;
       let req <- toGet(reqQ).get();
       let addr = req.addr;
@@ -77,18 +81,22 @@ module mkFlashReader(FlashReaderIFC);
       if ( addrRemainder != 0 )
          numPages = numPages + 1;
       
-      if ( numPages == 1 ) begin
-         immQ.enq(ReadPipeT{reqId: req.reqId, baseAddr: addr, numBytes: numBytes, numPages: truncate(numPages)});
-         tagReqQ.enq(extend(numPages));
-      end
-      else begin
-         $display("Num of pages is out of bounds");
-      end
+      //if ( numPages == 1 ) begin
+      $display("read cmd basics, reqid = %d, baseAddr = %d, numBytes = %d, numPages = %d", req.reqId, addr, numBytes, numPages);
+      immQ.enq(ReadPipeT{reqId: req.reqId, baseAddr: addr, numBytes: numBytes, numPages: truncate(numPages)});
+      tagReqQ.enq(extend(numPages));
+      reorderbuf.reserveServer.request.put(truncate(numPages));
+      //end
+      // else begin
+      //    $display("Num of pages is out of bounds");
+      // end
    endrule
       
    
    BRAM_Configure cfg = defaultValue;
-   BRAM2Port#(TagT, Tuple4#(TagT, BusT, PageOffsetT, ValSizeT)) tag2reqIdTable <- mkBRAM2Server(cfg);
+   // address: virtual pageId;
+   // data: regId, deqTag, enqTag, pageCnt, channel, PageOffset, nBytes, numPages;
+   BRAM2Port#(TagT, Tuple8#(TagT, TagT, TagT, Bit#(8), BusT, PageOffsetT, ValSizeT, Bit#(8))) tag2reqIdTable <- mkBRAM2Server(cfg);
    
    //RegFile#(TagT, Tuple4#(TagT, BusT, PageOffsetT, ValSizeT)) tag2reqIdTable <- mkRegFileFull;
     
@@ -98,7 +106,7 @@ module mkFlashReader(FlashReaderIFC);
    rule doFlashCmd;
       //***** tag allocation
       let nextTag <- toGet(freeTagQ).get();
-
+      let d <- reorderbuf.reserveServer.response.get();
 
       let v = immQ.first();
       let numPages = v.numPages;
@@ -110,22 +118,34 @@ module mkFlashReader(FlashReaderIFC);
          cmdCnt <= cmdCnt + 1;
       end
 
-      //$display("doFlashCmd cmdCnt = %d, numPages = %d", cmdCnt, numPages);      
+      $display("doFlashCmd cmdCnt = %d, numPages = %d", cmdCnt, numPages);      
       RawFlashAddrT addr = unpack(truncateLSB(pack(v.baseAddr)) + truncate(cmdCnt));
-      $display("Flash Reader sends flash cmd, reqId = %d, addr = %d", v.reqId, addr);
-      //flash.sendCmd(FlashCmd{tag: nextTag, op: READ_PAGE, bus: addr.channel, chip: addr.way, block: extend(addr.block), page: extend(addr.page)});
+      $display("Flash Reader sends flash cmd, reqId = %d, addr = %d, tag = %d", v.reqId, addr, nextTag);
+
       flashReqQ.enq(FlashCmd{tag: nextTag, op: READ_PAGE, bus: addr.channel, chip: addr.way, block: extend(addr.block), page: extend(addr.page)});
       
       tag2reqIdTable.portA.request.put(BRAMRequest{write: True,
                                                    responseOnWrite: False,
                                                    address: nextTag,
-                                                   datain: tuple4(v.reqId, addr.channel, truncate(pack(v.baseAddr)), v.numBytes)});
+                                                   datain: tuple8(v.reqId,
+                                                                  tpl_1(d),
+                                                                  tpl_2(d),
+                                                                  truncate(cmdCnt),
+                                                                  addr.channel,
+                                                                  truncate(pack(v.baseAddr)),
+                                                                  v.numBytes,
+                                                                  truncate(numPages))});
+      
+      // tag2reqIdTable.portA.request.put(BRAMRequest{write: True,
+      //                                              responseOnWrite: False,
+      //                                              address: nextTag,
+      //                                              datain: tuple4(v.reqId, addr.channel, truncate(pack(v.baseAddr)), v.numBytes)});
       //tag2reqIdTable.upd(nextTag, tuple4(v.reqId, addr.channel, truncate(pack(v.baseAddr)), v.numBytes));
       
    endrule
 
    FIFO#(Tuple2#(Bit#(128), TagT)) immDtaQ <- mkFIFO;
-   Vector#(NUM_BUSES,FIFO#(Tuple2#(Bit#(128), TagT))) dataQs <- replicateM(mkFIFO());
+   //Vector#(NUM_BUSES,FIFO#(Tuple2#(Bit#(128), TagT))) dataQs <- replicateM(mkFIFO());
    
   
    rule doFlashRead;
@@ -134,6 +154,7 @@ module mkFlashReader(FlashReaderIFC);
       let tag = tpl_2(v);
       immDtaQ.enq(v);
       //if ( byteCnt_page == 0 )
+      $display("Flash Read God data, tag = %d, data = %h", tag, tpl_1(v));
       tag2reqIdTable.portB.request.put(BRAMRequest{write:False,
                                                    responseOnWrite: False,
                                                    address:tag,
@@ -142,7 +163,8 @@ module mkFlashReader(FlashReaderIFC);
    endrule
    
    //tuple3 = {reqId, numBytes, offset}
-   Vector#(NUM_BUSES,FIFO#(Tuple3#(TagT, ValSizeT, PageOffsetT))) cmdQs <- replicateM(mkFIFO);
+   //Vector#(NUM_BUSES,FIFO#(Tuple3#(TagT, ValSizeT, PageOffsetT))) cmdQs <- replicateM(mkFIFO);
+   FIFO#(Tuple4#(TagT, ValSizeT, PageOffsetT, Bit#(8))) cmdQ <- mkSizedFIFO(128);
    Vector#(NUM_BUSES, Reg#(Bit#(TLog#(PageSizeUser)))) pgByteCnts <- replicateM(mkReg(0));
    rule doDistributeData;
       let v <- tag2reqIdTable.portB.response.get();
@@ -154,11 +176,18 @@ module mkFlashReader(FlashReaderIFC);
       let data <- toGet(immDtaQ).get();
       
       let tag = tpl_2(data);
+
+   // address: virtual pageId;
+   // data: regId, deqTag, enqTag, pageCnt, channel, PageOffset, nBytes;
    
       let reqId = tpl_1(v);
-      let channel = tpl_2(v);
-      let pgOffset = tpl_3(v);
-      let numBytes = tpl_4(v);
+      let deqTag = tpl_2(v);
+      let enqTag = tpl_3(v);
+      let pageSeqId = tpl_4(v);
+      let channel = tpl_5(v);
+      let pgOffset = tpl_6(v);
+      let numBytes = tpl_7(v);
+      let numPages = tpl_8(v);
       
       //dataQs[channel].enq(data);
       
@@ -166,9 +195,11 @@ module mkFlashReader(FlashReaderIFC);
          if ( channel == fromInteger(i) ) begin
            //            pgByteCnts[i] <= pgByteCnts[i] + 1;
             
-            if (pgByteCnts[i] == 0 ) begin
+            if (pgByteCnts[i] == 0 && pageSeqId == 0) begin
                $display("Flash Read, got first token from reqid = %d", reqId);
-               cmdQs[i].enq(tuple3(reqId, numBytes, pgOffset));
+               //cmdQs[i].enq(tuple3(reqId, numBytes, pgOffset));
+               cmdQ.enq(tuple4(reqId, numBytes, pgOffset, numPages));
+               reorderbuf.deqReq(deqTag, numPages);
             end
             
             if (pgByteCnts[i] == fromInteger(pageSizeUser-16) ) begin
@@ -181,115 +212,80 @@ module mkFlashReader(FlashReaderIFC);
             end
             
             if (pgByteCnts[i] < fromInteger(pageSz)) begin
-               dataQs[i].enq(data);
+               //dataQs[i].enq(data);
+               reorderbuf.inData(enqTag, tpl_1(data));
             end
          end
       end
       
    endrule
-   
 
-   Vector#(NUM_BUSES,FIFO#(Bit#(128))) wordQs <- replicateM(mkSizedBRAMFIFO(512*3));
-   Vector#(NUM_BUSES,FIFOF#(Tuple3#(Bit#(4), ValSizeT, TagT))) alignCmdQs <- replicateM(mkFIFOF);
-   
-   for (Integer i = 0; i < valueOf(NUM_BUSES); i = i + 1 ) begin
-      Reg#(Bit#(TSub#(SizeOf#(PageOffsetT),4))) wordCnt_page <- mkReg(0);
 
-      Reg#(Bit#(TSub#(SizeOf#(PageOffsetT),3))) wordCnt_resp <- mkReg(0);
+   Reg#(Bit#(TSub#(SizeOf#(ValSizeT),3))) wordCnt_total <- mkReg(0);
+   Reg#(Bit#(TSub#(SizeOf#(ValSizeT),3))) wordCnt_resp <- mkReg(0);
 
-      
-      //ByteAlignIfc#(Bit#(128), TagT) byteAlign <- mkByteAlignPipeline();
-      //ByteAlignIfc#(Bit#(128), TagT) byteAlign <- mkByteAlignCombinational();
-      //mkConnection(byteAlign.inPipe, toGet(wordQ));
-      //mkConnection(byteAlign.outPipe, toPut(respQs[i]));
-      
-      rule doExtractData;
-         let v = cmdQs[i].first;
-         let reqId = tpl_1(v);
-         let numBytes = tpl_2(v);
-         let pgOffset = tpl_3(v);
-         
-         Bit#(TSub#(SizeOf#(PageOffsetT),4)) wordIdx = truncateLSB(pgOffset);
-         Bit#(4) wordOffset = truncate(pgOffset);
-         
-         ValSizeT effectiveBytes = extend(wordOffset) + numBytes;
-         Bit#(TSub#(SizeOf#(PageOffsetT), 3)) numWords = truncate(effectiveBytes >> 4);
-         Bit#(4) remainder = truncate(effectiveBytes);
-         if (remainder != 0) begin
-            numWords = numWords + 1;
-         end
-         
-      
-         wordCnt_page <= wordCnt_page + 1;
-      
-         if (wordCnt_page + 1 == 0 )
-            cmdQs[i].deq();
-         
-         
-         let d <- toGet(dataQs[i]).get();
-         let tag = tpl_2(d);
-         let data = tpl_1(d);
-         
-         $display("Flash read: do extract data, reqId = %d, wordCnt_page == %d, wordCnt_resp = %d, numWords = %d", reqId, wordCnt_page, wordCnt_resp, numWords);
-         if ( wordCnt_page >= wordIdx ) begin
-            if ( wordCnt_page + 1 == 0) begin
-               wordCnt_resp <= 0;
-            end
-            else if (wordCnt_resp < numWords) begin
-               wordCnt_resp <= wordCnt_resp + 1;
-            end
-            
-            if ( wordCnt_resp + 1 == numWords )
-               alignCmdQs[i].enq(tuple3(wordOffset, numBytes, reqId));
-      
-            if ( wordCnt_resp < numWords ) begin
-               wordQs[i].enq(data);
-            end
-
-         end
-      endrule
-      
-   end
-   
-   FIFO#(Tuple4#(Bit#(4), ValSizeT, TagT, Bit#(TLog#(NUM_BUSES)))) alignCmd <- mkFIFO;
-   Arbiter_IFC#(NUM_BUSES) arbiter <- mkArbiter(False);
-
-   for (Integer i = 0; i < valueOf(NUM_BUSES); i = i + 1) begin
-      rule doReqs_0 if (alignCmdQs[i].notEmpty);
-         arbiter.clients[i].request;
-      endrule
-      
-      rule doReqs_1 if (arbiter.grant_id == fromInteger(i));
-         let v <- toGet(alignCmdQs[i]).get();
-         alignCmd.enq(tuple4(tpl_1(v), tpl_2(v), tpl_3(v), fromInteger(i)));
-      endrule
-   end
-   
    ByteAlignIfc#(Bit#(128), TagT) byteAlign <- mkByteAlignCombinational();
-   Reg#(ValSizeT) byteCnt_align <- mkReg(0);
-   rule doAlign;
-      let v = alignCmd.first();
-      let wordOffset = tpl_1(v);
-      let nBytes = tpl_2(v);
-      let reqId = tpl_3(v);
-      let sel = tpl_4(v);
-      
-      if ( byteCnt_align == 0) begin
-         byteAlign.align(wordOffset, extend(nBytes), reqId);
-         burstSzQ.enq(tuple2(nBytes, reqId));
-      end
    
-      let d <- toGet(wordQs[sel]).get();
-      byteAlign.inPipe.put(d);
+   Reg#(Bit#(8)) byteReg <- mkReg(0);
+   
+   rule doExtractData;
+      let v = cmdQ.first;
+      let reqId = tpl_1(v);
+      let numBytes = tpl_2(v);
+      let pgOffset = tpl_3(v);
+      let numPages = tpl_4(v);
+
+      let d <- reorderbuf.outPipe.get();
+            
+      Bit#(TSub#(SizeOf#(ValSizeT),3)) wordIdx = extend(pgOffset>>4);
+      Bit#(4) wordOffset = truncate(pgOffset);
       
-      if (byteCnt_align + 16 < nBytes) begin
-         byteCnt_align <= byteCnt_align + 16;
+      ValSizeT effectiveBytes = extend(wordOffset) + numBytes;
+      Bit#(TSub#(SizeOf#(ValSizeT), 3)) numWords = truncate(effectiveBytes >> 4);
+      Bit#(4) remainder = truncate(effectiveBytes);
+      if (remainder != 0) begin
+         numWords = numWords + 1;
+      end
+
+      Vector#(16, Bit#(8)) dVec = unpack(d);
+      byteReg <= dVec[15];
+      Bool warning = (dVec[0] != byteReg + 1);
+      
+      for (Integer i = 0; i < 15; i = i + 1 ) begin
+         if ( dVec[i] + 1 != dVec[i+1] )
+            warning = True;
+      end
+
+      if ( warning ) $display("Warning!!!!");
+      
+      $display("Flash read: do extract data, reqId = %d, wordCnt_total == %d, wordCnt_resp = %d, numWords = %d, numPages = %d, wordMax = %d, data = %h", reqId, wordCnt_total, wordCnt_resp, numWords, numPages, numPages << 9, d);
+
+      
+      if (wordCnt_total + 1 == extend(numPages) << 9 ) begin
+         cmdQ.deq();
+         wordCnt_total <= 0;
       end
       else begin
-         byteCnt_align <= 0;
-         alignCmd.deq();
+         wordCnt_total <= wordCnt_total + 1;
       end
       
+      if ( wordCnt_total >= wordIdx ) begin
+         if ( wordCnt_total + 1 == extend(numPages) << 9) begin
+            wordCnt_resp <= 0;
+         end
+         else if (wordCnt_resp < numWords) begin
+            wordCnt_resp <= wordCnt_resp + 1;
+         end
+
+         if ( wordCnt_resp == 0) begin
+            byteAlign.align(wordOffset, extend(numBytes), reqId);
+            burstSzQ.enq(tuple2(numBytes, reqId));
+         end
+      
+         if ( wordCnt_resp < numWords ) begin
+            byteAlign.inPipe.put(d);
+         end
+      end
    endrule
               
    interface FlashReadServer server;      

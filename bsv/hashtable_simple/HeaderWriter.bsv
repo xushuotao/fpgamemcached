@@ -40,8 +40,8 @@ module mkHeaderWriter#(SFifo#(NUM_STAGES, HashValueT, HashValueT) sFifo)(HeaderW
    FIFO#(ValAllocRespT) valRespQ <- mkFIFO();
 
    
-   FIFO#(HeaderWriterPipeT) stageQ_0 <- mkFIFO;
-   FIFO#(Bit#(32)) hv_idxQ <- mkFIFO;
+   FIFO#(HeaderWriterPipeT) stageQ_0 <- mkSizedFIFO(numStages);
+   FIFO#(Bit#(32)) hv_idxQ <- mkSizedFIFO(numStages);
    FIFO#(HeaderWriterPipeT) stageQ_1 <- mkFIFO;
    FIFO#(HeaderWriterPipeT) immediateQ <- mkFIFO;
    
@@ -65,6 +65,7 @@ module mkHeaderWriter#(SFifo#(NUM_STAGES, HashValueT, HashValueT) sFifo)(HeaderW
       if ( sFifo.search(hv) ) begin
          cam.writePort.put(tuple2(hv, tuple2(idx,v.flashAddr)));
       end
+      $display("Update Header of Evicted Value, hv = %h, idx = %d, new_addr = %d", hv, idx, v.flashAddr);
       dramReqQs[1].enq(DRAMReq{rnw:False, addr: wrAddr, data:extend(pack(ValAddrT{onFlash:True, valAddr: extend(pack(v.flashAddr))})), numBytes:fromInteger(valueOf(TDiv#(SizeOf#(ValAddrT), 8)))});
    endrule
    
@@ -77,13 +78,13 @@ module mkHeaderWriter#(SFifo#(NUM_STAGES, HashValueT, HashValueT) sFifo)(HeaderW
    
    rule prepWrite_1 if (!outstandingHdrUpdQ.search(hv_idxQ.first));
       $display("HeaderWriter:: Get ValAlloc Resp");
+      //$display(
       let v <- toGet(stageQ_0).get();
       hv_idxQ.deq();
 
       let newValue = v.newValue;
       //let retval = v.retval;
       //let args = v.args;
-         
               
       if ( newValue ) begin
          // handle write req
@@ -164,7 +165,7 @@ module mkHeaderWriter#(SFifo#(NUM_STAGES, HashValueT, HashValueT) sFifo)(HeaderW
          let cmpMask = args.cmpMask;
          let idleMask = args.idleMask;
    
-         $display("HeaderWriter: cmpMask = %b, idleMask = %b, doWrite = %b, numBytes = %d, reqCnt = %d", cmpMask, idleMask, args.rnw, args.value_size, reqCnt);
+         $display("(%t) HeaderWriter: cmpMask = %b, idleMask = %b, doWrite = %b, numBytes = %d, reqCnt = %d",$time,  cmpMask, idleMask, args.opcode, args.value_size, reqCnt);
    
 
          Bit#(TLog#(NumWays)) ind = ?;
@@ -191,24 +192,37 @@ module mkHeaderWriter#(SFifo#(NUM_STAGES, HashValueT, HashValueT) sFifo)(HeaderW
                      
             newhdr = old_header[ind];
             
-            if ( args.rnw ) begin
+            if ( args.opcode == PROTOCOL_BINARY_CMD_GET ) begin
                $display("Read Success");
                retval.status = PROTOCOL_BINARY_RESPONSE_SUCCESS;
             end
-            else begin
+            else if ( args.opcode == PROTOCOL_BINARY_CMD_SET) begin
                $display("Write Fail");
                retval.status = PROTOCOL_BINARY_RESPONSE_KEY_EEXISTS;
                doWrite = False;
             end
+            else if ( args.opcode == PROTOCOL_BINARY_CMD_DELETE ) begin
+               $display("Delete Success");
+               retval.status = PROTOCOL_BINARY_RESPONSE_SUCCESS;
+               newhdr.keylen = 0;
+               valReqQ.enq(ValAllocReqT{nBytes: extend(args.value_size) + extend(args.key_size),
+                                        oldAddr: truncate(old_header[ind].valAddr.valAddr),
+                                        oldNBytes: extend(old_header[ind].nBytes) + extend(old_header[ind].keylen),
+                                        //trade_in: trade_in});
+                                        rtn_old: True,
+                                        req_new: False});
+               newVal = True;
+
+            end
          
          end
          else begin
-            if (args.rnw) begin
+            if ( args.opcode == PROTOCOL_BINARY_CMD_GET ) begin
                $display("Read fail");
                retval.status = PROTOCOL_BINARY_RESPONSE_NOT_STORED;
                doWrite = False;
             end
-            else begin
+            else if ( args.opcode == PROTOCOL_BINARY_CMD_SET ) begin
                retval.status = PROTOCOL_BINARY_RESPONSE_SUCCESS;
                Bool trade_in = False;
                
@@ -230,10 +244,18 @@ module mkHeaderWriter#(SFifo#(NUM_STAGES, HashValueT, HashValueT) sFifo)(HeaderW
                valReqQ.enq(ValAllocReqT{nBytes: extend(args.value_size) + extend(args.key_size),
                                         oldAddr: truncate(old_header[ind].valAddr.valAddr),
                                         oldNBytes: extend(old_header[ind].nBytes) + extend(old_header[ind].keylen),
-                                        trade_in: trade_in});
+                                        //trade_in: trade_in});
+                                        rtn_old: trade_in,
+                                        req_new: True});
                newVal = True;
             end
+            else if ( args.opcode == PROTOCOL_BINARY_CMD_DELETE ) begin
+               $display("Deletion fail");
+               retval.status = PROTOCOL_BINARY_RESPONSE_NOT_STORED;
+               doWrite = False;
+            end    
          end
+   
 
          retval.value_addr = old_header[ind].valAddr;
          retval.value_size = extend(old_header[ind].nBytes) + extend(old_header[ind].keylen);

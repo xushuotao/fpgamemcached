@@ -324,7 +324,7 @@ module mkByteAlignCombinational(AlignIfc#(element_type, tag_type, lgWidth))
             leftOver <= False;
          end
       end
-      //$display("wordCnt_sft = %d, nInWords = %d, nOutWords = %d", wordCnt_sft, nInWords, nOutWords);
+      //$display("%m:: byteAligner wordCnt_in = %d, wordMax_in = %d, leftOver = %d, nextLeftOver = %d", wordCnt_in, wordMax_in, leftOver, nextLeftOver);
    endrule
    
    
@@ -360,7 +360,7 @@ module mkByteAlignCombinational(AlignIfc#(element_type, tag_type, lgWidth))
                     
       sfter.rotateByteBy(data, wordOffset);
       immQ.enq(tuple2(byteIncr, reqId));
-      
+      //$display("%m:: byteAligner reqId = %d, wordCnt_out = %d, nOutWords = %d", reqId, wordCnt_out, nOutWords);      
    endrule
 
    method Action align(Bit#(lgWidth) offset, Bit#(32) numBytes, tag_type reqId);
@@ -376,6 +376,157 @@ module mkByteAlignCombinational(AlignIfc#(element_type, tag_type, lgWidth))
       if (remainder_out != 0) begin
          nOutWords = nOutWords + 1;
       end
+   
+      //$display("%m:: byteAligner get request reqId = %d, nInWords = %d, nOutWords = %d, offset = %d, maxBytes = %d", reqId, nInWords, nOutWords, offset, numBytes);
+
+      if ( numBytes > 0) begin
+         sftArgs.enq(tuple2(nInWords, nOutWords));
+         sftArgs_1.enq(tuple4(reqId, offset, nOutWords, numBytes));
+      end
+   endmethod
+   interface Put inPipe = toPut(wordQ);
+   interface Get outPipe;
+      method ActionValue#(Tuple3#(element_type, Bit#(TAdd#(lgWidth,1)), tag_type)) get;
+         let data <- sfter.getVal;
+         let v <- toGet(immQ).get();
+         return tuple3(unpack(truncate(pack(data))), tpl_1(v), tpl_2(v));
+      endmethod
+   endinterface
+endmodule
+
+module mkByteAlignCombinational_debug(AlignIfc#(element_type, tag_type, lgWidth))
+   provisos(Bits#(element_type, a__),
+            Bitwise#(element_type),
+            Add#(b__, lgWidth, 32),
+            Add#(c__, lgWidth, TLog#(TDiv#(TAdd#(a__, a__), 8))),
+            Bits#(tag_type, d__),
+            Add#(e__, TAdd#(lgWidth, 1), 32),
+            Add#(1, f__, TAdd#(a__, a__))
+            //Add#(1, g__, TAdd#(TAdd#(a__, a__), TLog#(TDiv#(TAdd#(i__, j__), 8))))
+            );
+   // FIFOF#(Tuple2#(Bit#(32), Bit#(32))) sftArgs <- mkSizedFIFOF(32);
+   // FIFO#(Tuple4#(tag_type, Bit#(lgWidth), Bit#(32), Bit#(32))) sftArgs_1 <- mkSizedFIFO(64);
+   FIFOF#(Tuple2#(Bit#(32), Bit#(32))) sftArgs <- mkFIFOF();
+   FIFO#(Tuple4#(tag_type, Bit#(lgWidth), Bit#(32), Bit#(32))) sftArgs_1 <- mkSizedFIFO(4);
+   
+   
+   FIFOF#(element_type) wordQ <- mkSizedFIFOF(4);
+   
+   Reg#(element_type) readCache <- mkRegU;
+   Reg#(Bit#(32)) wordCnt_in <- mkReg(0);
+   Reg#(Bit#(32)) wordMax_in <- mkReg(0);
+   
+   FIFO#(ShiftT#(element_type)) imm_dataQ;
+   //if ( fromInteger(valueOf(SizeOf#(element_type))) > 256 ) 
+    //  imm_dataQ <- mkSizedBRAMFIFO(2);
+   //else
+   imm_dataQ <- mkFIFO();
+   
+   Reg#(Bool) leftOver <- mkReg(False);
+   Reg#(Bool) nextLeftOver <- mkReg(False);
+   rule doAlignData;
+      if ( wordQ.notEmpty) begin
+         if (wordCnt_in + 1 >= wordMax_in) begin
+            if ( sftArgs.notEmpty() ) begin
+               let v <- toGet(sftArgs).get();
+               let nInWords = tpl_1(v);
+               let nOutWords = tpl_2(v);
+               
+               wordCnt_in <= 0;
+               wordMax_in <= nInWords;
+            
+               leftOver <= nextLeftOver;
+               nextLeftOver <= (nOutWords >= nInWords);
+               //$display("nextLeftOver = %d <= %d", nextLeftOver, (nOutWords >= nInWords));
+            end
+            else begin
+               wordCnt_in <= 0;
+               wordMax_in <= 0;
+               leftOver <= nextLeftOver;
+               nextLeftOver <= False;
+            end
+         end
+         else begin
+            wordCnt_in <= wordCnt_in + 1;
+         end
+      
+         element_type word = ?;
+         if ( wordMax_in > 0 ) begin
+            word <- toGet(wordQ).get();
+            readCache <= word;
+         end
+         
+         if ( wordCnt_in == 0) begin
+            if (leftOver) begin
+               //$display("here");
+               imm_dataQ.enq({0, pack(readCache)});
+            end
+         end 
+         else begin
+            imm_dataQ.enq({pack(word), pack(readCache)});
+         end
+      end
+      else begin
+         if ( wordCnt_in == 0 && leftOver ) begin
+            imm_dataQ.enq({0, pack(readCache)});
+            leftOver <= False;
+         end
+      end
+      if ( wordMax_in > 0 )
+         $display("%m:: byteAligner wordCnt_in = %d, wordMax_in = %d, leftOver = %d, nextLeftOver = %d, word = %h", wordCnt_in, wordMax_in, leftOver, nextLeftOver, wordQ.first);
+   endrule
+   
+   
+   //ByteSftIfc#(ShiftT#(element_type)) sfter <- mkCombinationalRightShifter();
+   ByteShiftIfc#(ShiftT#(element_type), lgWidth) sfter <- mkCombinationalRightShifter();
+   FIFO#(Tuple2#(Bit#(TAdd#(lgWidth, 1)),tag_type)) immQ <- mkSizedFIFO(3);
+   
+   Reg#(Bit#(32)) wordCnt_out <- mkReg(0);
+   Reg#(Bit#(32)) byteCnt <- mkReg(0);
+      
+   rule doAlignData_1;
+      //$display("%m:: Got Data at %t", $time);
+      let data <- toGet(imm_dataQ).get();
+      let v = sftArgs_1.first();
+      let reqId = tpl_1(v);
+      let wordOffset = tpl_2(v);
+      let nOutWords = tpl_3(v);
+      let totalBytes = tpl_4(v);
+      
+      Bit#(TAdd#(lgWidth, 1)) byteIncr = ?;
+      if (wordCnt_out + 1 >= nOutWords) begin
+         wordCnt_out <= 0;
+         sftArgs_1.deq();
+         byteCnt <= 0;
+         byteIncr = truncate(totalBytes - byteCnt);
+         $display("Done last word");
+      end
+      else begin
+         wordCnt_out <= wordCnt_out + 1;
+         byteCnt <= byteCnt + (1 << valueOf(lgWidth));
+         byteIncr = 1 << valueOf(lgWidth);
+      end
+                    
+      sfter.rotateByteBy(data, wordOffset);
+      immQ.enq(tuple2(byteIncr, reqId));
+      $display("%m:: byteAligner reqId = %d, wordCnt_out = %d, nOutWords = %d", reqId, wordCnt_out, nOutWords);      
+   endrule
+
+   method Action align(Bit#(lgWidth) offset, Bit#(32) numBytes, tag_type reqId);
+      Bit#(32) effectiveBytes = extend(offset) + numBytes;
+      Bit#(32) nInWords = effectiveBytes >> valueOf(lgWidth);
+      Bit#(lgWidth) remainder_in = truncate(effectiveBytes);
+      if (remainder_in != 0) begin
+         nInWords = nInWords + 1;
+      end
+   
+      Bit#(32) nOutWords = numBytes >> valueOf(lgWidth);
+      Bit#(lgWidth) remainder_out = truncate(numBytes);
+      if (remainder_out != 0) begin
+         nOutWords = nOutWords + 1;
+      end
+   
+      $display("%m:: byteAligner get request reqId = %d, nInWords = %d, nOutWords = %d, offset = %d, maxBytes = %d", reqId, nInWords, nOutWords, offset, numBytes);
 
       if ( numBytes > 0) begin
          sftArgs.enq(tuple2(nInWords, nOutWords));
@@ -411,7 +562,7 @@ module mkByteDeAlignCombinational(DeAlignIfc#(element_type, tag_type, lgWidth))
    
    //ByteSftIfc#(ShiftT#(element_type)) sfter <- mkCombinationalRightShifter();
    ByteShiftIfc#(ShiftT#(element_type), lgWidth) sfter <- mkCombinationalRightShifter();
-   
+
    FIFO#(Tuple2#(Bit#(TAdd#(lgWidth, 1)), tag_type)) immQ <- mkFIFO();
 
    Reg#(Bit#(32)) wordCnt <- mkReg(0);

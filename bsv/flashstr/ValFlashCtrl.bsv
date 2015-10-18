@@ -29,28 +29,30 @@ interface ValFlashCtrlUser;
    interface DRAM_LOCK_Client dramClient;
    interface FlashRawWriteClient flashRawWrClient;
    interface FlashRawReadClient flashRawRdClient;
-   //interface Aurora_Pins#(4) aurora_fmc1;
-   //interface Aurora_Clock_Pins aurora_clk_fmc1;
+   interface TagClient tagClient;
+   // interface Aurora_Pins#(4) aurora_fmc1;
+   // interface Aurora_Clock_Pins aurora_clk_fmc1;
 endinterface
 
 (*synthesize*)
 module mkValFlashCtrl(ValFlashCtrlUser);
-   /*
-   GtxClockImportIfc gtx_clk_fmc1 <- mkGtxClockImport;
-   `ifdef BSIM
-   FlashCtrlVirtexIfc flashCtrl <- mkFlashCtrlModel(gtx_clk_fmc1.gtx_clk_p_ifc, gtx_clk_fmc1.gtx_clk_n_ifc, clk250);
-   `else
-   FlashCtrlVirtexIfc flashCtrl <- mkFlashCtrlVirtex(gtx_clk_fmc1.gtx_clk_p_ifc, gtx_clk_fmc1.gtx_clk_n_ifc, clk250);
-   `endif
-   */
+//module mkValFlashCtrl#(Clock clk250)(ValFlashCtrlUser);
+  
+   // GtxClockImportIfc gtx_clk_fmc1 <- mkGtxClockImport;
+   // `ifdef BSIM
+   // FlashCtrlVirtexIfc flashCtrl <- mkFlashCtrlModel(gtx_clk_fmc1.gtx_clk_p_ifc, gtx_clk_fmc1.gtx_clk_n_ifc, clk250);
+   // `else
+   // FlashCtrlVirtexIfc flashCtrl <- mkFlashCtrlVirtex(gtx_clk_fmc1.gtx_clk_p_ifc, gtx_clk_fmc1.gtx_clk_n_ifc, clk250);
+   // `endif
+  
    let flusher <- mkEvictionBufFlush();
    let reader <- mkFlashReader();
    
-   let tagAlloc <- mkTagAlloc;
+   //let tagAlloc <- mkTagAlloc;
    
    TagAllocArbiterIFC#(2) tagArb <- mkTagAllocArbiter();
    
-   mkConnection(tagAlloc, tagArb.client);
+   //mkConnection(tagAlloc, tagArb.client);
    
    mkConnection(flusher.tagClient, tagArb.servers[0]);
    mkConnection(reader.tagClient, tagArb.servers[1]);
@@ -74,9 +76,11 @@ module mkValFlashCtrl(ValFlashCtrlUser);
    
    interface FlashRawWriteClient flashRawWrClient = flusher.flashRawWrClient;
    interface FlashRawReadClient flashRawRdClient = reader.flashRawRdClient;
-   /*
-   interface Aurora_Pins aurora_fmc1 = flashCtrl.aurora;
-   interface Aurora_Clock_Pins aurora_clk_fmc1 = gtx_clk_fmc1.aurora_clk;
-   */
+   
+   interface TagClient tagClient = tagArb.client;
+   
+   // interface Aurora_Pins aurora_fmc1 = flashCtrl.aurora;
+   // interface Aurora_Clock_Pins aurora_clk_fmc1 = gtx_clk_fmc1.aurora_clk;
+   
 endmodule
    

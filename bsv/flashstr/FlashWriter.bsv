@@ -41,6 +41,7 @@ module mkEvictionBufFlush(EvictionBufFlushIFC);
    /***** write buf flushes to dram *****/
    Vector#(2,FIFO#(DRAM_LOCK_Req)) dramCmdQs <- replicateM(mkFIFO);
    Vector#(2,FIFO#(Bit#(512))) dramDtaQs <- replicateM(mkFIFO);
+   //Vector#(2,FIFO#(Bit#(512))) dramDtaQs <- replicateM(mkSizedFIFO(32));
 
       
    BRAM_Configure cfg = defaultValue;
@@ -101,7 +102,7 @@ module mkEvictionBufFlush(EvictionBufFlushIFC);
                                                   });
       //tag2addrTable.upd(newTag, byteCnt_flash);
             
-      //$display("FlushWriter send cmd: tag = %d, bus = %d, chip = %d, block = %d, page = %d", newTag, addr.channel, addr.way, addr.block, addr.page);
+      $display("FlushWriter send cmd: tag = %d, bus = %d, chip = %d, block = %d, page = %d", newTag, addr.channel, addr.way, addr.block, addr.page);
       //flash.sendCmd(FlashCmd{tag: newTag, op: WRITE_PAGE, bus: addr.channel, chip: addr.way, block: extend(addr.block), page: extend(addr.page)});
       flashReqQ.enq(FlashCmd{tag: newTag, op: WRITE_PAGE, bus: addr.channel, chip: addr.way, block: extend(addr.block), page: extend(addr.page)});
             
@@ -130,6 +131,8 @@ module mkEvictionBufFlush(EvictionBufFlushIFC);
    Reg#(Bit#(TLog#(SuperPageSz))) byteCnt_dram <- mkReg(0);
    //Reg#(Bit#(TLog#(PageSz))) byteCnt_page <- mkReg(0);
    
+   FIFO#(Tuple2#(Bit#(7), Bit#(9))) flushDRAMStatQ <- mkSizedFIFO(32);
+   
    rule doFlashWriteReq;
       let bufId = bufIdQ_dramReq.first();
       let addr = dramAddrQ.first();
@@ -152,13 +155,16 @@ module mkEvictionBufFlush(EvictionBufFlushIFC);
       
       if (byteCnt_page + 64 == 0 ) begin
          dramAddrQ.deq();
+         $display("last dram for page sent");
 //         byteCnt_page <= 0;
       end
   //    else begin
    //      byteCnt_page <= byteCnt_page + 64;
    //   end
       //dramCmdQs[bufId].enq(DRAM_LOCK_Req{rnw: True, addr: extend(addr + extend(byteCnt_page)), data: ?, numBytes: 64, lock: lock, ignoreLock: False});
-      dramCmdQs[bufId].enq(DRAM_LOCK_Req{rnw: True, addr: extend(addr + extend(byteCnt_page)), data: ?, numBytes: 64, lock: False, ignoreLock:True, initlock: False});      
+      $display("Flash Flusher sends DRAMreq, bufId = %d, pageId = %d, cachelineId = %d", bufId, addr/8192, byteCnt_page/64);
+      dramCmdQs[bufId].enq(DRAM_LOCK_Req{rnw: True, addr: extend(addr + extend(byteCnt_page)), data: ?, numBytes: 64, lock: False, ignoreLock:True, initlock: False});
+      flushDRAMStatQ.enq(tuple2(truncate(addr/8192), truncate(byteCnt_page/64)));
    endrule
    
    SerializerIfc#(512, 128, Bit#(0)) des <- mkSerializer();
@@ -168,6 +174,8 @@ module mkEvictionBufFlush(EvictionBufFlushIFC);
       let d <- toGet(dramDtaQs[bufId]).get();
       des.marshall(d, 4, ?);
       byteCnt_resp <= byteCnt_resp + 64;
+      let stats <- toGet(flushDRAMStatQ).get();
+      $display("Flash Flusher got DRAMresp, bufId = %d, pageId = %d, cachelineId = %d, data = %h", bufId, tpl_1(stats), tpl_2(stats), d);
       if (byteCnt_resp + 64 == 0)
          bufIdQ_dramResp.deq();
    endrule
@@ -185,14 +193,17 @@ module mkEvictionBufFlush(EvictionBufFlushIFC);
          byteCnt_RdResp <= byteCnt_RdResp + 16;
       end
       
+
       if (byteCnt_RdResp < fromInteger(pageSz) ) begin
          let d <- des.getVal;
          //flash.writeWord(tuple2(tpl_1(d), tag));
          writeWordQ.enq(tuple2(tpl_1(d), tag));
+         $display("Flash Flusher write to flash, tag = %d, wordCnt = %d, data = %h", tag, byteCnt_RdResp/16, tpl_1(d));
       end
       else begin
          //flash.writeWord(tuple2(0, tag));
          writeWordQ.enq(tuple2(0, tag));
+         $display("Flash Flusher write to flash, tag = %d, wordCnt = %d, data = %h", tag, byteCnt_RdResp/16, 0);
       end
 
 
