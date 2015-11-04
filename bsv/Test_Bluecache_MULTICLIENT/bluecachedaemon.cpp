@@ -82,6 +82,14 @@ int num_resps = 0;
 
 int flush_type_0 = 0;
 int flush_type_1 = 0;
+int flush_type_2 = 0;
+int flush_type_x = 0;
+int flush_type_req_0 = 0;
+int flush_type_req_1 = 0;
+int flush_type_req_2 = 0;
+int flush_type_req_3 = 0;
+
+
 
 unsigned int old_dma_requests = 0;
 int old_batched_requests = 0;
@@ -369,6 +377,8 @@ int waitIdleWriteBuffer() {
 void dmaBufMemwrite(char* reqBuf, size_t totalSize){
   atomic_inc(&outstanding_requests);
 
+  int temp_batched_requests = batched_requests;
+
   if ( srcBuf_offset + totalSize < DMABUF_SZ ){
     batched_requests++;
   } else if ( srcBuf_offset + totalSize == DMABUF_SZ ) {
@@ -376,6 +386,7 @@ void dmaBufMemwrite(char* reqBuf, size_t totalSize){
   } else {
     batched_requests = 1;
   }
+
   while (totalSize > 0 ){
     if ( srcBuf_offset + totalSize < DMABUF_SZ) {
       //fprintf(stderr, "Main:: currSrcBase = %d, srcBuf_offset = %d\n", currSrcBase, srcBuf_offset);
@@ -390,11 +401,13 @@ void dmaBufMemwrite(char* reqBuf, size_t totalSize){
         device->startRead(currSrcBase, DMABUF_SZ);
         //fprintf(stderr, "Number of DMA Read Requests = %d\n", dma_requests);
         dma_requests++;
+		flush_type_req_3 += temp_batched_requests;
       }
       srcBuf_offset=0;
       currSrcBase = waitIdleReadBuffer();
     }
   }
+
 }
 
 
@@ -673,19 +686,30 @@ void *flush_request(void *ptr){
     pthread_mutex_lock(&mutexlock);
     int outstanding_reqs = atomic_read(&outstanding_requests);
     int dma_resps = atomic_read(&dma_responses);
+	int sleep = 0;
 
     if ( !flushing  ){
-      if ( batched_requests > 0 && old_batched_requests == batched_requests && old_dma_requests == dma_requests ) {
+      if ( batched_requests >= 64) {
+        flush_type_0++;
+		flush_type_req_0 += batched_requests;
+        flushDmaBuf();
+	  } else if ( batched_requests > 0 && old_batched_requests == batched_requests && old_dma_requests == dma_requests ) {
         //fprintf(stderr, "batched_requests = %d, old_batched_requests = %d, dma_requests = %d, old_dma_requests = %d, num_of_flushes = %d\n", batched_requests, old_batched_requests, dma_requests, old_dma_requests, num_of_flushes++);
+		flush_type_1++;
+		flush_type_req_1 += batched_requests;
         flushDmaBuf();
         flushing = true;
-        flush_type_0++;
+		sleep = 1;
       } else if ( outstanding_reqs > 0 && outstanding_reqs == old_outstanding_requests && old_dma_responses == dma_resps ){
         //fprintf(stderr, "outstanding_requests = %d, old_outstanding_requests = %d, dma_responses = %d, old_dma_responses = %d, num_of_flushes = %d\n", outstanding_reqs, old_outstanding_requests, dma_resps, old_dma_responses, num_of_flushes++);
+		flush_type_2++;
+		flush_type_req_2 += batched_requests;
         flushDmaBuf();
         flushing = true;
-        flush_type_1++;
-      }
+		sleep = 1;
+      } else {
+        flush_type_x++;
+	  }
     }
     old_batched_requests = batched_requests;
     old_dma_requests = dma_requests;
@@ -694,7 +718,8 @@ void *flush_request(void *ptr){
     //pthread_spin_unlock(&spinlock);
     pthread_mutex_unlock(&mutexlock);
 
-    usleep(10000);
+	if (sleep)
+    	usleep(10000);
   }
 }
 
@@ -706,11 +731,13 @@ void sendSet(void* key, void* val, size_t keylen, size_t vallen, uint32_t opaque
   //fprintf(stderr, "Main:: send Set request, clientId = %d, numReqs = %d\n", opaque, numReqs);
   sendSet(key, val, keylen, vallen, opaque);
   //fprintf(stderr, "Main:: send Set numReqs = %d, clientCnt = %d\n", numReqs, clientCnt);
+  /*
   if ( numReqs % clientCnt == clientCnt - 1){
     //fprintf(stderr, "Main:: flushing pipeline, flushCnt = %d\n", numFlushes++);
     flushDmaBuf();
     flushing = true;
   }
+  */
 
   numReqs++;
   //fprintf(stderr, "Main:: send Set return pointers, clientId = %d\n", opaque);  
@@ -730,11 +757,13 @@ void sendGet(void* key, size_t keylen, uint32_t opaque, unsigned char** val, siz
   pthread_mutex_lock(&mutexlock);
   sendGet(key, keylen, opaque);
   //fprintf(stderr, "Main:: send Get numReqs = %d, clientCnt = %d\n", numReqs, clientCnt);
+  /*
   if ( numReqs % clientCnt == clientCnt - 1 ){
     //fprintf(stderr, "Main:: flushing pipeline, flushCnt = %d\n", numFlushes++);
     flushDmaBuf();
     flushing = true;
   }
+  */
 
   numReqs++;
   //fprintf(stderr, "Main:: send Get return pointers, clientId = %d\n", opaque);  
@@ -761,10 +790,12 @@ void sendDelete(void* key, size_t keylen, uint32_t opaque, bool* success){
   pthread_mutex_lock(&mutexlock);
   sendDelete(key, keylen, opaque);
   //fprintf(stderr, "Main:: send Delete numReqs = %d, clientCnt = %d\n", numReqs, clientCnt);
+  /*
   if ( numReqs % clientCnt == clientCnt - 1 ){
     flushDmaBuf();
     flushing = true;
   }
+  */
   numReqs++;
   successList[opaque] = success;
   //pthread_spin_unlock(&spinlock);

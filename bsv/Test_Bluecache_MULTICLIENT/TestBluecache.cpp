@@ -82,6 +82,16 @@ void *get_request(void *ptr){
   }
 }
 
+extern int flush_type_0;
+extern int flush_type_1;
+extern int flush_type_2;
+extern int flush_type_x;
+extern int flush_type_req_0;
+extern int flush_type_req_1;
+extern int flush_type_req_2;
+extern int flush_type_req_3;
+
+
 int main(int argc, const char **argv){
   initBluecacheProxy();
   timespec start, now;
@@ -120,6 +130,14 @@ int main(int argc, const char **argv){
   fprintf(stderr, "Main:: Set Test Successful, %f MRPS\n", num_Sets*threadcount/(timespec_diff_sec(start, now)*1000000));
   sleep(1);
 
+  flush_type_0 = 0;
+  flush_type_1 = 0;
+  flush_type_2 = 0;
+	flush_type_x = 0;
+	flush_type_req_0 = 0;
+	flush_type_req_1 = 0;
+	flush_type_req_2 = 0;
+	flush_type_req_3 = 0;
 
   pthread_t* get_threads = new pthread_t[threadcount];
 
@@ -135,4 +153,12 @@ int main(int argc, const char **argv){
   clock_gettime(CLOCK_REALTIME, & now);
   fprintf(stderr, "Main:: Get Test Successful, num_resps = %d\n", num_Gets*threadcount);
   fprintf(stderr, "Main:: Get Test Successful, %f MRPS\n", (num_Gets*threadcount)/(timespec_diff_sec(start, now)*1000000));
+
+  fprintf(stderr, "Main:: %d(%d) %d(%d) %d(%d), %d, (%d)", 
+		  flush_type_0, flush_type_req_0,
+		  flush_type_1, flush_type_req_1,
+		  flush_type_2, flush_type_req_2,
+		  flush_type_x,
+		  flush_type_req_3
+		  );
 }

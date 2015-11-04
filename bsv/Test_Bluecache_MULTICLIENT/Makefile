@@ -1,5 +1,5 @@
 SRC_BSV=/home/shuotao/fpgamemcached/bsv/
-CONNECTALDIR?=~/tools/connectal_bluedbm/
+CONNECTALDIR?=~/tools/connectal/
 INTERFACES = BluecacheRequest BluecacheIndication
 BSVFILES = Bluecache.bsv Top.bsv
 CPPFILES=TestBluecache.cpp BluecacheClient.cpp bluecachedaemon.cpp

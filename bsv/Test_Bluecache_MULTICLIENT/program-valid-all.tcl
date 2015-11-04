@@ -4,9 +4,9 @@ connect_hw_server
 #set_property PARAM.FREQUENCY 30000000 [get_hw_targets */xilinx_tcf/Digilent/*]
 open_hw_target 
 set artixfpga [lindex [get_hw_devices] 0] 
-set vc707fpga [lindex [get_hw_devices] 2] 
+set vc707fpga [lindex [get_hw_devices] 1] 
 
-set file /home/shuotao/mkTopArtix.bit
+set file /home/chamdoo/mkTopArtix.bit
 set_property PROGRAM.FILE $file $artixfpga
 puts "fpga is $artixfpga, bit file size is [exec ls -sh $file], PROGRAM BEGIN"
 program_hw_devices $artixfpga
