@@ -52,6 +52,13 @@
 
 #define DMABUF_SZ (1<<13)
 
+#define NUM_BUFS (ALLOC_SZ/DMABUF_SZ)
+volatile int dmaWrEnqPtr = 0;
+volatile int dmaWrDeqPtr = 0;
+
+volatile int dmaRdEnqPtr = 0;
+volatile int dmaRdDeqPtr = 0;
+
 
 int reqId = 0;
 int eomCnt = 0;
@@ -211,16 +218,12 @@ public:
   }
   int dmaReadResp;// = 0;
   virtual void rdDone(uint32_t bufId){
-    pthread_mutex_lock(&mu_read);
-    freeReadBufId.push(bufId);
-    pthread_mutex_unlock(&mu_read);
     //fprintf(stderr, "Main:: dma readBufId = %d done success, dmaReadResp = %d\n", bufId, dmaReadResp++);
+    dmaRdEnqPtr=(dmaRdEnqPtr+1)%(2*NUM_BUFS);
   }
   virtual void wrDone(uint32_t bufId){
-    pthread_mutex_lock(&mu_write);
-    returnWriteBufId.push(bufId);
-    pthread_mutex_unlock(&mu_write);
-    //fprintf(stderr, "Main:: dma writeBufId = %d done success\n", bufId);
+    //fprintf(stderr, "Main:: dma Write dmaWrEnqPtr = %d done success\n", dmaWrEnqPtr);
+    dmaWrEnqPtr=(dmaWrEnqPtr+1)%(2*NUM_BUFS);
   }  
   BluecacheIndication(int id) : BluecacheIndicationWrapper(id){//, eraseAcks(0), dumpAcks(0){
     lowCnt_0 = 0;
@@ -341,32 +344,26 @@ double timespec_diff_usec( timespec start, timespec end ) {
 
 
 int waitIdleReadBuffer() {
-  int tag = -1;
-  //fprintf(stderr, "Main::WaitIdleReadBuf, trying to get next bufId\n");
-  while ( tag < 0 ) {
-    pthread_mutex_lock(&mu_read);
-    if ( !freeReadBufId.empty() ) {
-      tag = freeReadBufId.front();
-      freeReadBufId.pop();
+  while ( true ){
+    if ( dmaRdEnqPtr != dmaRdDeqPtr ){
+      int retval = (dmaRdDeqPtr%NUM_BUFS)*DMABUF_SZ;
+      //fprintf(stderr, "Main::WaitIdleReadBuf, dmaRdDeqPtr = %d,  got next bufId = %d\n", dmaRdDeqPtr, retval);
+      dmaRdDeqPtr=(dmaRdDeqPtr+1)%(2*NUM_BUFS);
+      return retval;
     }
-    pthread_mutex_unlock(&mu_read);
   }
-  //fprintf(stderr, "Main::WaitIdleReadBuf, got next bufId = %d\n", tag);
-  return tag;
 }
 
 int waitIdleWriteBuffer() {
-  int tag = -1;
-  while ( tag < 0 ) {
-    pthread_mutex_lock(&mu_write);
-    if ( !returnWriteBufId.empty() ) {
-      tag = returnWriteBufId.front();
-      returnWriteBufId.pop();
+  while ( true ){
+    if ( dmaWrEnqPtr != dmaWrDeqPtr ){
+      int retval = (dmaWrDeqPtr%NUM_BUFS)*DMABUF_SZ;
+      //fprintf(stderr, "Main::WaitIdleWriteBuf, dmaWrDeqPtr = %d,  got next bufId = %d\n", dmaWrDeqPtr, retval);
+      dmaWrDeqPtr=(dmaWrDeqPtr+1)%(2*NUM_BUFS);
+      return retval;
+
     }
-    pthread_mutex_unlock(&mu_write);
   }
-  //fprintf(stderr, "Main::WaitIdleWriteBuf, got next bufId = %d\n", tag);
-  return tag;
 }
 
 void dmaBufMemwrite(char* reqBuf, size_t totalSize){
@@ -512,7 +509,7 @@ void dmaBufMemreadBuf(void* respBuf, size_t totalSize){
       }
       dstBuf_offset=0;
       currDstBase = waitIdleWriteBuffer();
-      //atomic_inc(&dma_responses);
+      atomic_inc(&dma_responses);
     }
   }
 }
@@ -551,9 +548,6 @@ size_t** valSizeList;
 int clientCnt = 0;
 
 int initMainThread(){
-  // if (clientCnt == 0) {
-  //   initBluecacheProxy();
-  // }
   
   pthread_mutex_lock(&mutexlock);
   sem_t* lockList_temp = new sem_t[clientCnt+1];
@@ -652,13 +646,15 @@ void initBluecacheProxy(){
   device->initDMARefs(ref_srcAlloc, ref_dstAlloc);
   device->reset(rand());
 
-  pthread_mutex_lock(&mu_read);
+  dmaRdEnqPtr=NUM_BUFS;
+  dmaRdDeqPtr=0;
+  //pthread_mutex_lock(&mu_read);
   for (uint32_t t = 0; t < numBufs; t++) {
     uint32_t byteoffset = t * DMABUF_SZ;
-    freeReadBufId.push(byteoffset);
+    //freeReadBufId.push(byteoffset);
     device->freeWriteBufId(byteoffset);
   }
-  pthread_mutex_unlock(&mu_read);
+  //pthread_mutex_unlock(&mu_read);
 
   device->initDMABufSz(DMABUF_SZ);
   //initMemcached(8193, 8194, 8195 , 1<<25, (1<<25)+(1<<14)+8193*2048, 1<<27, 1<<29);
@@ -709,23 +705,13 @@ void sendSet(void* key, void* val, size_t keylen, size_t vallen, uint32_t opaque
   //pthread_spin_lock(&spinlock);
   pthread_mutex_lock(&mutexlock);
   //fprintf(stderr, "Main:: send Set request, clientId = %d, numReqs = %d\n", opaque, numReqs);
-  // if ( numReqs % clientCnt == 0 ){
-  //   while ( flushing ){
-  //   }
-  // }
   sendSet(key, val, keylen, vallen, opaque);
-  // delete key;
-  // delete val;
   //fprintf(stderr, "Main:: send Set numReqs = %d, clientCnt = %d\n", numReqs, clientCnt);
   if ( numReqs % clientCnt == clientCnt - 1){
     //fprintf(stderr, "Main:: flushing pipeline, flushCnt = %d\n", numFlushes++);
     flushDmaBuf();
     flushing = true;
   }
-  // old_batched_requests = batched_requests;
-  // old_dma_requests = dma_requests;
-  // old_outstanding_requests = atomic_read(&outstanding_requests);
-  // old_dma_responses = atomic_read(&dma_responses);
 
   numReqs++;
   //fprintf(stderr, "Main:: send Set return pointers, clientId = %d\n", opaque);  
@@ -743,23 +729,13 @@ void sendGet(void* key, size_t keylen, uint32_t opaque, unsigned char** val, siz
   //fprintf(stderr, "Main:: send Get request trying to grab lock, clientId = %d\n", opaque);
   //pthread_spin_lock(&spinlock);
   pthread_mutex_lock(&mutexlock);
-  //fprintf(stderr, "Main:: send Get request go lock, clientId = %d\n", opaque);
-  // if ( numReqs % clientCnt == 0 ){
-  //   while ( flushing ){
-  //   }
-  // }
   sendGet(key, keylen, opaque);
-  // delete key;
   //fprintf(stderr, "Main:: send Get numReqs = %d, clientCnt = %d\n", numReqs, clientCnt);
   if ( numReqs % clientCnt == clientCnt - 1 ){
     //fprintf(stderr, "Main:: flushing pipeline, flushCnt = %d\n", numFlushes++);
     flushDmaBuf();
     flushing = true;
   }
-  // old_batched_requests = batched_requests;
-  // old_dma_requests = dma_requests;
-  // old_outstanding_requests = atomic_read(&outstanding_requests);
-  // old_dma_responses = atomic_read(&dma_responses);
 
   numReqs++;
   //fprintf(stderr, "Main:: send Get return pointers, clientId = %d\n", opaque);  
@@ -784,21 +760,12 @@ void sendGet(void* key, size_t keylen, uint32_t opaque, unsigned char** val, siz
 void sendDelete(void* key, size_t keylen, uint32_t opaque, bool* success){
   //pthread_spin_lock(&spinlock);
   pthread_mutex_lock(&mutexlock);
-  // if ( numReqs % clientCnt == 0 ){
-  //   while ( flushing ){
-  //   }
-  // }
   sendDelete(key, keylen, opaque);
   //fprintf(stderr, "Main:: send Delete numReqs = %d, clientCnt = %d\n", numReqs, clientCnt);
   if ( numReqs % clientCnt == clientCnt - 1 ){
     flushDmaBuf();
     flushing = true;
   }
-  // old_batched_requests = batched_requests;
-  // old_dma_requests = dma_requests;
-  // old_outstanding_requests = atomic_read(&outstanding_requests);
-  // old_dma_responses = atomic_read(&dma_responses);
-
   numReqs++;
   successList[opaque] = success;
   //pthread_spin_unlock(&spinlock);
