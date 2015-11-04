@@ -1,6 +1,6 @@
 #include "BluecacheClient.h"
 
-#include "testbluecache.h"
+#include "bluecachedaemon.h"
 
 #include <stdio.h>
 

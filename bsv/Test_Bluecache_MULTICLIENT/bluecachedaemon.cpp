@@ -46,7 +46,7 @@
 #include <queue>
 #include <iostream>
 
-#include "testbluecache.h"
+#include "bluecachedaemon.h"
 
 #define ALLOC_SZ (1<<20)
 
@@ -674,7 +674,6 @@ void *flush_request(void *ptr){
     int outstanding_reqs = atomic_read(&outstanding_requests);
     int dma_resps = atomic_read(&dma_responses);
 
-
     if ( !flushing  ){
       if ( batched_requests > 0 && old_batched_requests == batched_requests && old_dma_requests == dma_requests ) {
         //fprintf(stderr, "batched_requests = %d, old_batched_requests = %d, dma_requests = %d, old_dma_requests = %d, num_of_flushes = %d\n", batched_requests, old_batched_requests, dma_requests, old_dma_requests, num_of_flushes++);
@@ -695,7 +694,7 @@ void *flush_request(void *ptr){
     //pthread_spin_unlock(&spinlock);
     pthread_mutex_unlock(&mutexlock);
 
-    usleep(1000);
+    usleep(10000);
   }
 }
 
