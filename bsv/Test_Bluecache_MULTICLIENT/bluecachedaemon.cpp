@@ -842,9 +842,3 @@ void *decode_response(void *ptr){
     atomic_dec(&outstanding_requests);
   }
 }
-
-// int main(int argc, const char **argv)
-// {
-//   int ret = runtest(argc, argv);
-//   exit(ret ? 1 : 0);
-// }
