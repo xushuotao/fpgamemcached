@@ -700,6 +700,7 @@ void *flush_request(void *ptr){
         flushDmaBuf();
         flushing = true;
 		sleep = 1;
+		/*
       } else if ( outstanding_reqs > 0 && outstanding_reqs == old_outstanding_requests && old_dma_responses == dma_resps ){
         //fprintf(stderr, "outstanding_requests = %d, old_outstanding_requests = %d, dma_responses = %d, old_dma_responses = %d, num_of_flushes = %d\n", outstanding_reqs, old_outstanding_requests, dma_resps, old_dma_responses, num_of_flushes++);
 		flush_type_2++;
@@ -707,6 +708,7 @@ void *flush_request(void *ptr){
         flushDmaBuf();
         flushing = true;
 		sleep = 1;
+		*/
       } else {
         flush_type_x++;
 	  }
@@ -719,8 +721,10 @@ void *flush_request(void *ptr){
     pthread_mutex_unlock(&mutexlock);
 
 	if (sleep)
-    	usleep(10000);
-  }
+		usleep(50000);
+	else 
+		usleep(10);
+  } 
 }
 
 int numReqs = 0;
