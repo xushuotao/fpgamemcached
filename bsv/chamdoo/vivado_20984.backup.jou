@@ -1,0 +1,10 @@
+#-----------------------------------------------------------
+# Vivado v2014.1 (64-bit)
+# SW Build 881834 on Fri Apr  4 14:00:25 MDT 2014
+# IP Build 877625 on Fri Mar 28 16:29:15 MDT 2014
+# Start of session at: Wed Nov  4 16:53:02 2015
+# Process ID: 20852
+# Log file: /home/chamdoo/fpgamemcached/bsv/Test_Bluecache_MULTICLIENT/vivado.log
+# Journal file: /home/chamdoo/fpgamemcached/bsv/Test_Bluecache_MULTICLIENT/vivado.jou
+#-----------------------------------------------------------
+source program-clear-all.tcl

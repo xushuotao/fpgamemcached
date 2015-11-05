@@ -1,0 +1,2 @@
+
+GENERATED_CPP=GeneratedCppCallbacks.cpp BluecacheRequest.c BluecacheIndication.c MemServerRequest.c MMURequest.c MemServerIndication.c MMUIndication.c
