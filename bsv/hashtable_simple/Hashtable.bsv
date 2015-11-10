@@ -19,7 +19,7 @@ import HeaderWriter::*;
 
 interface HashtableInitIfc;
    method Action initTable(Bit#(64) lgOffset);
-   method Bool initialized;
+   method ActionValue#(Bool) initialized;
 endinterface
 
 interface HashtableIfc;
@@ -51,12 +51,14 @@ module mkAssocHashtb(HashtableIfc);
    Reg#(PhyAddr) addr <- mkReg(0);
    FIFO#(PhyAddr) addrMaxQ <- mkFIFO;
    Reg#(Bool) initialized <- mkReg(False);
+   FIFO#(Bool) initializedQ <- mkFIFO();
    rule doinit;
       let addrMax = addrMaxQ.first();
       if ( addr + 64 >= addrMax ) begin
          addr <= 0;
          addrMaxQ.deq;
          initialized <= True;
+         initializedQ.enq(True);
       end
       else begin
          addr <= addr + 64;
@@ -80,7 +82,8 @@ module mkAssocHashtb(HashtableIfc);
                                         key_size: v.key_size,
                                         value_size: v.value_size,
                                         time_now: clk.get_time(),
-                                        rnw: v.rnw
+                                        //rnw: v.rnw
+                                        opcode: v.opcode
                                         });
          endmethod
       endinterface
@@ -92,16 +95,18 @@ module mkAssocHashtb(HashtableIfc);
          //hvMax <= unpack((1 << lgOffset) - 1) / fromInteger(valueOf(ItemOffset));
          hvMax <= (1 << lgOffset) - 1;
          PhyAddr maxAddr = (1 << lgOffset) << 6;
-      //`ifndef BSIM
+         //`ifndef BSIM
          addrMaxQ.enq(maxAddr);
-         //initialized <= False;
-         //`else
-         //initialized <= True;
-         //`endif
+         initialized <= False;
+         // `else
+         // initialized <= True;
+         // `endif
       endmethod
    
-      method Bool initialized;
-         return initialized;
+      method ActionValue#(Bool) initialized;
+         let v = initializedQ.first();
+         initializedQ.deq();
+         return v;
       endmethod
    endinterface
    

@@ -21,7 +21,7 @@ endinterface
 module mkHashtableArbiter(HashtableArbiter);
    Vector#(3, FIFOF#(DRAMReq)) dramReqQs <- replicateM(mkFIFOF);
    
-   FIFO#(DRAMReq) dramCmdQ <- mkFIFO;
+   FIFO#(DRAMReq) dramCmdQ <- mkSizedFIFO(32);
    FIFO#(Bit#(512)) dramRespQ <- mkFIFO;
    
    FIFO#(Bool) wrAckQ <- mkBypassFIFO;

@@ -8,7 +8,7 @@ import ClientServer::*;
 import ClientServerHelper::*;
 
 import DRAMCommon::*;
-import DRAMArbiter::*;
+import ValDRAMArbiter::*;
 
 import Time::*;
 
@@ -44,7 +44,7 @@ interface ValDRAMCtrlIFC;
    
    interface ValDRAMUser user;
    
-   interface DRAM_LOCK_Client dramClient;
+   interface ValDRAMClient dramClient;
    
    interface FlashWriteClient flashWriteClient;
    
@@ -67,13 +67,36 @@ module mkValDRAMCtrl(ValDRAMCtrlIFC);
         
    FIFO#(WordT) readRespQ <- mkFIFO();
    
-   Vector#(2,FIFO#(DRAM_LOCK_Req)) dramCmdQs <- replicateM(mkSizedFIFO(32));
+   //Vector#(2,FIFO#(DRAM_LOCK_Req)) dramCmdQs <- replicateM(mkSizedFIFO(32));
+   //Vector#(2,FIFO#(Bit#(512))) dramDataQs <- replicateM(mkFIFO());
+   
+   FIFO#(Tuple2#(DRAM_ACK_Req,Bit#(1))) dramCmdQ <- mkFIFO();
    Vector#(2,FIFO#(Bit#(512))) dramDataQs <- replicateM(mkFIFO());
    
-   DRAM_LOCK_Arbiter_Bypass#(2) dramArb <- mkDRAM_LOCK_Arbiter_Bypass;
+   FIFO#(DRAM_ACK_Req) dramRawCmdQ <- mkSizedFIFO(32);
+   FIFO#(Bit#(1)) selQ <- mkSizedFIFO(32);
+   FIFO#(Bit#(512)) dramRawDtaQ <- mkSizedFIFO(32);
+
+
+   rule doReq;
+      let v <- toGet(dramCmdQ).get();
+      let cmd = tpl_1(v);
+      let dst = tpl_2(v);
+      dramRawCmdQ.enq(cmd);
+      if ( cmd.rnw )
+         selQ.enq(dst);
+   endrule
    
-   mkConnection(toClient(dramCmdQs[0], dramDataQs[0]), dramArb.dramServers[0]);
-   mkConnection(toClient(dramCmdQs[1], dramDataQs[1]), dramArb.dramServers[1]);
+   
+   rule doResp;
+      let v <- toGet(dramRawDtaQ).get();
+      let sel <- toGet(selQ).get();
+      dramDataQs[sel].enq(v);
+   endrule
+   // DRAM_LOCK_Arbiter_Bypass#(2) dramArb <- mkDRAM_LOCK_Arbiter_Bypass;
+   
+   // mkConnection(toClient(dramCmdQs[0], dramDataQs[0]), dramArb.dramServers[0]);
+   // mkConnection(toClient(dramCmdQs[1], dramDataQs[1]), dramArb.dramServers[1]);
    
    
    FIFO#(CmdType) cmdQ <- mkFIFO();
@@ -124,7 +147,8 @@ module mkValDRAMCtrl(ValDRAMCtrlIFC);
    rule doHeader if (state == ProcHeader);
       let cmd = cmdQ.first();
       if (cmd.rnw) begin
-         dramCmdQs[0].enq(DRAM_LOCK_Req{initlock: False, ignoreLock: True, lock: False, rnw:False, addr: cmd.currAddr, data:extend(pack(real_time.get_time)), numBytes:fromInteger(valueOf(BytesOf#(Time_t)))});
+         //dramCmdQs[0].enq(DRAM_ACK_Req{initlock: False, ignoreLock: True, lock: False, rnw:False, addr: cmd.currAddr, data:extend(pack(real_time.get_time)), numBytes:fromInteger(valueOf(BytesOf#(Time_t)))});
+         dramCmdQ.enq(tuple2(DRAM_ACK_Req{ack: False, initlock: False, ignoreLock: True, lock: False, rnw:False, addr: cmd.currAddr, data:extend(pack(real_time.get_time)), numBytes:fromInteger(valueOf(BytesOf#(Time_t)))}, 0));
          cmdQ.deq();
          cmd.currAddr = cmd.currAddr + fromInteger(valHeaderBytes);
          cmdQ_Rd.enq(cmd);
@@ -132,8 +156,12 @@ module mkValDRAMCtrl(ValDRAMCtrlIFC);
       end
       else begin
          if ( !cmd.doEvict || byteCnt_Evict >= cmd.old_nBytes + fromInteger(flashHeaderSz)) begin
-            $display("Update Header");
-            dramCmdQs[0].enq(DRAM_LOCK_Req{initlock: False, ignoreLock: True, lock: False, rnw:False, addr: cmd.currAddr, data:extend(pack(ValHeader{timestamp: real_time.get_time, hv: cmd.hv, idx: cmd.idx, nBytes: cmd.numBytes})), numBytes: fromInteger(valHeaderBytes)});
+            $display("Update Header, reqId = %d", cmd.reqId);
+            //dramCmdQs[0].enq(DRAM_ACK_Req{initlock: False, ignoreLock: True, lock: False, rnw:False, addr: cmd.currAddr, data:extend(pack(ValHeader{timestamp: real_time.get_time, hv: cmd.hv, idx: cmd.idx, nBytes: cmd.numBytes})), numBytes: fromInteger(valHeaderBytes)});
+            Bool ack = True;//cmd.doEvict;
+            //Bool ack = cmd.doEvict;
+            
+            dramCmdQ.enq(tuple2(DRAM_ACK_Req{ack: ack, initlock: False, ignoreLock: True, lock: False, rnw:False, addr: cmd.currAddr, data:extend(pack(ValHeader{timestamp: real_time.get_time, hv: cmd.hv, idx: cmd.idx, nBytes: cmd.numBytes})), numBytes: fromInteger(valHeaderBytes)},0));
             byteCnt_Evict <= 0;
             cmd.currAddr = cmd.currAddr + fromInteger(valHeaderBytes);
             cmdQ.deq();
@@ -145,7 +173,7 @@ module mkValDRAMCtrl(ValDRAMCtrlIFC);
          else begin
             let addr = cmd.currAddr + fromInteger(evictOffset) + extend(byteCnt_Evict);
             let rowidx = addr >> 6;
-            $display("Valstr issuing read cmd: currAddr = %d", addr);
+            $display("Valstr issuing read cmd for eviction: reqId = %d, currAddr = %d", cmd.reqId, addr);
             Bit#(7) nBytes = ?;
 
             if (addr[5:0] == 0) begin
@@ -155,7 +183,8 @@ module mkValDRAMCtrl(ValDRAMCtrlIFC);
                nBytes = 64 - extend(addr[5:0]);
             end
             
-            dramCmdQs[1].enq(DRAM_LOCK_Req{initlock: False, ignoreLock: True, lock: False, rnw:True, addr: rowidx << 6, data:?, numBytes:nBytes});
+            //dramCmdQs[1].enq(DRAM_ACK_Req{initlock: False, ignoreLock: True, lock: False, rnw:True, addr: rowidx << 6, data:?, numBytes:nBytes});
+            dramCmdQ.enq(tuple2(DRAM_ACK_Req{ack: False, initlock: False, ignoreLock: True, lock: False, rnw:True, addr: rowidx << 6, data:?, numBytes:nBytes},1));
             $display("byteCnt_Evict = %d, byteIncr = %d, total numBytes = %d", byteCnt_Evict, nBytes, cmd.old_nBytes + fromInteger(flashHeaderSz));
             byteCnt_Evict <= byteCnt_Evict + extend(nBytes);            
          end
@@ -202,7 +231,8 @@ module mkValDRAMCtrl(ValDRAMCtrlIFC);
          debug_cnt <= debug_cnt + 1;
       end
       $display("%m:: dram Read, byteCnt_Rd = %d, addr = %d, byteIncr = %d, numBytes = %d, debug_cnt = %d", byteCnt_Rd, rowidx << 6, nBytes, cmd.numBytes, debug_cnt);
-      dramCmdQs[0].enq(DRAM_LOCK_Req{initlock: initlock, ignoreLock: False, lock: lock, rnw:True, addr: rowidx << 6, data:?, numBytes:nBytes});
+      //dramCmdQs[0].enq(DRAM_ACK_Req{initlock: initlock, ignoreLock: False, lock: lock, rnw:True, addr: rowidx << 6, data:?, numBytes:nBytes});
+      dramCmdQ.enq(tuple2(DRAM_ACK_Req{ack: False, initlock: initlock, ignoreLock: False, lock: lock, rnw:True, addr: rowidx << 6, data:?, numBytes:nBytes},0));
    endrule
    
    ByteSer ser <- mkByteSer;
@@ -287,8 +317,9 @@ module mkValDRAMCtrl(ValDRAMCtrlIFC);
       let v <- des.outPipe.get();
       let data = tpl_1(v);
       let numBytes = tpl_2(v);
-      $display("DRAM Value store write: addr = %d, data = %h, numBytes = %d", addr, data, numBytes);
-      dramCmdQs[0].enq(DRAM_LOCK_Req{initlock: False, ignoreLock: True, lock: False, rnw: cmd.rnw, addr: addr, data: data, numBytes: numBytes});
+      $display("DRAM Value store write: reqId = %d, addr = %d, data = %h, numBytes = %d", cmd.reqId, addr, data, numBytes);
+      //dramCmdQs[0].enq(DRAM_ACK_Req{initlock: False, ignoreLock: True, lock: False, rnw: cmd.rnw, addr: addr, data: data, numBytes: numBytes});
+      dramCmdQ.enq(tuple2(DRAM_ACK_Req{ack: False, initlock: False, ignoreLock: True, lock: False, rnw: cmd.rnw, addr: addr, data: data, numBytes: numBytes},0));
       
       $display("byteCnt_wr = %d, incrByte = %d , totalNbytes = %d", byteCnt_wr, numBytes, cmd.numBytes);
       if ( byteCnt_wr + extend(numBytes) == cmd.numBytes) begin
@@ -330,9 +361,11 @@ module mkValDRAMCtrl(ValDRAMCtrlIFC);
                           hv:req.hv,
                           idx:req.idx,
                           doEvict: req.doEvict,
-                          old_nBytes: req.old_nBytes});
+                          old_nBytes: req.old_nBytes,
+                          reqId: reqCnt});
    
          if (req.doEvict) begin
+            $display("Value Eviction is needed: old_hv = %h, old_idx = %d, numBytes = %d, addr = %d", req.old_hv, req.old_idx, req.addr+ fromInteger(valueOf(BytesOf#(Time_t))), req.old_nBytes+fromInteger(flashHeaderSz));
             flashReqQ.enq(req.old_nBytes+fromInteger(flashHeaderSz));
             align_evict.align(truncate(req.addr+ fromInteger(valueOf(BytesOf#(Time_t)))), extend(req.old_nBytes)+fromInteger(flashHeaderSz), ?);
             hdrUpdQ_pre.enq(tuple2(req.old_hv, req.old_idx));
@@ -347,7 +380,7 @@ module mkValDRAMCtrl(ValDRAMCtrlIFC);
    
    endinterface
       
-   interface DRAMClient dramClient = dramArb.dramClient;
+   interface ValDRAMClient dramClient = toClient(dramRawCmdQ, dramRawDtaQ);//dramArb.dramClient;
    
    interface FlashWriteClient flashWriteClient = flashWrCli;
    

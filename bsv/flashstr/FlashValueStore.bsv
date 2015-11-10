@@ -36,6 +36,7 @@ module mkFlashValueStore(FlashValueStoreIfc);
    interface FlashRawWriteClient flashRawWrClient = valFlashCtrl.flashRawWrClient;
    interface FlashRawReadClient flashRawRdClient = valFlashCtrl.flashRawRdClient;
    interface TagClient tagClient = valFlashCtrl.tagClient;
+   
    /*interface FlashPins flashPins;
       interface Aurora_Pins aurora_fmc1 = valFlashCtrl.aurora_fmc1;
       interface Aurora_Clock_Pins aurora_clk_fmc1 = valFlashCtrl.aurora_clk_fmc1;

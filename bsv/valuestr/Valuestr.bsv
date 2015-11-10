@@ -33,6 +33,8 @@ import ValuestrCommon::*;
 
 import RegFile::*;
 
+import ValDRAMArbiter::*;
+
 
 import ParameterTypes::*;
 
@@ -70,9 +72,16 @@ module mkValueStore(ValuestrIFC);
 
    
    
-   DRAM_LOCK_Arbiter_Bypass#(2) dramArb <- mkDRAM_LOCK_Arbiter_Bypass();
+   // DRAM_LOCK_Arbiter_Bypass#(2) dramArb <- mkDRAM_LOCK_Arbiter_Bypass();
+   // mkConnection(dramArb.dramServers[0], dramValueStore.dramClient);
+   // mkConnection(dramArb.dramServers[1], valMng.dramClient);
+   
+   let dramArb <- mkValDRAMArbiter();
    mkConnection(dramArb.dramServers[0], dramValueStore.dramClient);
    mkConnection(dramArb.dramServers[1], valMng.dramClient);
+   mkConnection(dramArb.ack, valMng.ack);
+   
+   
    
    DRAM_LOCK_SegmentIfc#(2) dramSeg <- mkDRAM_LOCK_Segments;
    
@@ -84,7 +93,7 @@ module mkValueStore(ValuestrIFC);
  
    rule doWrReq if (!reqQ.first.rnw);
       let req <- toGet(reqQ).get();
-      $display("Issue write req");
+      $display("Issue write req, reqId = %d", req.reqId);
       dramValueStore.user.writeReq(ValstrWriteReqT{addr: extend(req.addr.valAddr),
                                                    nBytes: req.nBytes,
                                                    hv: req.hv,
@@ -275,10 +284,17 @@ module mkValueStore(ValuestrIFC);
       endmethod
    endinterface
    
+   interface indicationServers = valMng.indicationServers;
+   
    interface DRAMClient dramClient = dramSeg.dramClient;
    interface FlashRawWriteClient flashRawWrClient = flashValueStore.flashRawWrClient;
    interface FlashRawReadClient flashRawRdClient = flashValueStore.flashRawRdClient;
    //interface FlashPins flashPins = flashValueStore.flashPins;
+   interface TagClient tagClient = flashValueStore.tagClient;
+   method Action reset();
+      dramSeg.reset();
+      valMng.reset();
+   endmethod
 endmodule
 
 endpackage: Valuestr

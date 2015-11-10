@@ -12,6 +12,7 @@ interface DRAMSegmentIfc#(numeric type numServers);
    interface Vector#(numServers, DRAMServer) dramServers;
    interface Vector#(numServers, Put#(Bit#(64))) initializers;
    interface DRAMClient dramClient;
+   method Action reset();
 endinterface
 
 interface DRAM_LOCK_SegmentIfc#(numeric type numServers);
@@ -19,12 +20,14 @@ interface DRAM_LOCK_SegmentIfc#(numeric type numServers);
    interface Vector#(numServers, Put#(Bit#(64))) initializers;
    interface DRAMClient dramClient;
    interface Get#(Bit#(TLog#(numServers))) nextBurstSeg;
+   method Action reset();
 endinterface
 
 interface DRAM_LOCK_Segment_Bypass#(numeric type numServers);
    interface Vector#(numServers, DRAM_LOCK_Server) dramServers;
    interface Vector#(numServers, Put#(Bit#(64))) initializers;
    interface DRAM_LOCK_Client dramClient;
+   method Action reset();
 endinterface
 
 
@@ -47,7 +50,8 @@ module mkDRAMSegments(DRAMSegmentIfc#(numServers));
    
    
    FIFO#(DRAMReq) cmdQ <- mkFIFO;
-   FIFO#(Bit#(512)) dataQ <- mkFIFO;
+   //FIFO#(Bit#(512)) dataQ <- mkFIFO;
+   FIFO#(Bit#(512)) dataQ <- mkSizedFIFO(32);
    
    FIFO#(Bit#(TLog#(numServers))) tagQ <- mkSizedFIFO(32);
    
@@ -129,10 +133,17 @@ module mkDRAMSegments(DRAMSegmentIfc#(numServers));
    interface dramServers = ds;
    interface initializers = inits;
    
+   
    interface DRAMClient dramClient;
       interface Get request = toGet(cmdQ);
       interface Put response = toPut(dataQ);
    endinterface
+   method Action reset();
+      init <= False;
+      for (Integer i = 0; i < valueOf(numServers); i = i + 1) begin
+         initFlags[i] <= False;
+      end
+   endmethod
 endmodule
 
 
@@ -151,7 +162,8 @@ module mkDRAM_LOCK_Segments(DRAM_LOCK_SegmentIfc#(numServers));
    
    
    FIFO#(DRAMReq) cmdQ <- mkFIFO;
-   FIFO#(Bit#(512)) dataQ <- mkFIFO;
+   //FIFO#(Bit#(512)) dataQ <- mkFIFO;
+   FIFO#(Bit#(512)) dataQ <- mkSizedFIFO(32);
    
    FIFO#(Bit#(TLog#(numServers))) tagQ <- mkSizedFIFO(32);
    
@@ -262,6 +274,14 @@ module mkDRAM_LOCK_Segments(DRAM_LOCK_SegmentIfc#(numServers));
    endinterface
       
    interface Get nextBurstSeg = toGet(orderQ);
+
+   method Action reset();
+      init <= False;
+      for (Integer i = 0; i < valueOf(numServers); i = i + 1) begin
+         initFlags[i] <= False;
+      end
+   endmethod
+
 endmodule
 
 module mkDRAM_LOCK_Segments_Bypass(DRAM_LOCK_Segment_Bypass#(numServers));
@@ -279,7 +299,8 @@ module mkDRAM_LOCK_Segments_Bypass(DRAM_LOCK_Segment_Bypass#(numServers));
    
    
    FIFO#(DRAM_LOCK_Req) cmdQ <- mkFIFO;
-   FIFO#(Bit#(512)) dataQ <- mkFIFO;
+   //FIFO#(Bit#(512)) dataQ <- mkFIFO;
+   FIFO#(Bit#(512)) dataQ <- mkSizedFIFO(32);
    
    FIFO#(Bit#(TLog#(numServers))) tagQ <- mkSizedFIFO(32);
    
@@ -365,4 +386,12 @@ module mkDRAM_LOCK_Segments_Bypass(DRAM_LOCK_Segment_Bypass#(numServers));
       interface Get request = toGet(cmdQ);
       interface Put response = toPut(dataQ);
    endinterface
+   
+   method Action reset();
+      init <= False;
+      for (Integer i = 0; i < valueOf(numServers); i = i + 1) begin
+         initFlags[i] <= False;
+      end
+   endmethod
+
 endmodule

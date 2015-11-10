@@ -8,8 +8,11 @@ import FlashServer::*;
 import AuroraImportFmc1::*;
 import ControllerTypes::*;
 import AuroraCommon::*;
+import Vector::*;
 
+import HostFIFO::*;
 
+import TagAlloc::*;
 
 import MemcachedTypes::*;
 import HashtableTypes::*;
@@ -72,7 +75,9 @@ typedef struct {
    Bit#(32) nBytes;
    Bit#(32) oldAddr;
    Bit#(32) oldNBytes;
-   Bool trade_in;
+   //Bool trade_in;
+   Bool rtn_old;
+   Bool req_new;
    } ValAllocReqT deriving (Bits, Eq);
 
 typedef struct {
@@ -130,12 +135,14 @@ interface ValuestrIFC;
    interface ValAllocServer valAllocServer;
    
    interface ValuestrInitIfc valInit;
-
+   interface Vector#(3, IndicationServer#(Bit#(32))) indicationServers;
 
    interface DRAMClient dramClient;
       //interface FlashPins flashPins;
    interface FlashRawWriteClient flashRawWrClient;
    interface FlashRawReadClient flashRawRdClient;
+   interface TagClient tagClient;
+   method Action reset();
 endinterface
 
 

@@ -56,7 +56,7 @@ module mkDMAReader(DMAReadIfc);
       let lastBurstSz = args.lastBurstSz;
       let numBursts = args.numBursts;
       let base = args.base;
-      $display("drRdRq: base = %d, burstCnt = %d, numBursts = %d, lastBurstSz = %d", base, burstCnt, numBursts, lastBurstSz);
+      //$display("drRdRq: base = %d, burstCnt = %d, numBursts = %d, lastBurstSz = %d", base, burstCnt, numBursts, lastBurstSz);
       if ( burstCnt + 1 == numBursts ) begin
          dmaReqQ.enq(MemengineCmd{sglId:buffPtr, base:extend(base+(burstCnt<<7)), len:truncate(lastBurstSz), burstLen:truncate(lastBurstSz)});
          reqQ.deq();
@@ -69,11 +69,14 @@ module mkDMAReader(DMAReadIfc);
       end
    endrule
 
+   Reg#(Bit#(32)) rsCnt <- mkReg(0);
    rule finish_fifo;
       let rv1 <- toGet(dmaRespQ).get();
       let respMax = respMaxQ.first();
       if (respCnt + 1 == respMax) begin
          respMaxQ.deq();
+         $display("DMA Reader Done Ack, reqCnt = %d, respMax = %d", rsCnt, respMax);
+         rsCnt <= rsCnt + 1;
          doneQ.enq(True);
          respCnt <= 0;
       end
@@ -102,14 +105,15 @@ module mkDMAReader(DMAReadIfc);
          byteCnt <= byteCnt + 16;
       end
    endrule*/
-   
+   Reg#(Bit#(32)) rdCnt <- mkReg(0);
    interface Server server;
       interface Put request;
          method Action put(Tuple3#(Bit#(32), Bit#(32), Bit#(64)) v);
             let rp = tpl_1(v);
             let base = tpl_2(v);
             let nBytes = tpl_3(v);
-            $display("DMAHelper read request, rp = %d, base = %d, nBytes = %d",rp, base, nBytes);
+            rdCnt <= rdCnt + 1;
+            $display("DMAHelper read request, rp = %d, base = %d, nBytes = %d, reqCnt = %d",rp, base, nBytes, rdCnt);
             Bit#(32) numBursts = truncate(nBytes >> 7);
            
             Bit#(32) lastBurstSz;
@@ -174,15 +178,15 @@ module mkDMAWriter(DMAWriteIfc);
       let lastBurstSz = tpl_3(v);
       let base = tpl_4(v);
       
-      $display("drWrRq: base = %d, burstCnt = %d, numBursts = %d, lastBurstSz", base, burstCnt, numBursts, lastBurstSz);
+      //$display("drWrRq: base = %d, burstCnt = %d, numBursts = %d, lastBurstSz", base, burstCnt, numBursts, lastBurstSz);
       if ( burstCnt +1 == numBursts ) begin
-         $display("Last request");
+         //$display("Last request");
          dmaReqQ.enq(MemengineCmd{sglId:buffPtr, base:extend(base+(burstCnt<<7)), len:truncate(lastBurstSz), burstLen:truncate(lastBurstSz)});
          burstCnt <= 0;
          cmdQ.deq();
       end
       else if ( burstCnt + 1 < numBursts) begin
-         $display("Normal request");
+         //$display("Normal request");
          dmaReqQ.enq(MemengineCmd{sglId:buffPtr, base:extend(base+(burstCnt<<7)), len:128, burstLen:128});
          burstCnt <= burstCnt + 1;
       end
@@ -192,7 +196,7 @@ module mkDMAWriter(DMAWriteIfc);
    
    rule write_finish;
       let numOfResp = numOfRespQ.first();
-      $display("write_finish %d, %d", burstIterCnt, numOfResp);
+      //$display("write_finish %d, %d", burstIterCnt, numOfResp);
       //if ( numOfResp > 0) 
       let v <- toGet(dmaRespQ).get();
       if ( burstIterCnt + 1 < numOfResp) begin
@@ -213,7 +217,7 @@ module mkDMAWriter(DMAWriteIfc);
             let base = tpl_2(v);
             let nBytes = tpl_3(v);
             
-            $display("DMAHelper write request, wp = %d, base = %d, nBytes = %d", wp, base, nBytes);
+            //$display("DMAHelper write request, wp = %d, base = %d, nBytes = %d", wp, base, nBytes);
 
    
             Bit#(32) numBursts = truncate(nBytes >> 7);

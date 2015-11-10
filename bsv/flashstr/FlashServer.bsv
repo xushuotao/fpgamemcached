@@ -68,6 +68,7 @@ interface FlashServer;
    interface FlashRawReadServer readServer;
 //   interface FlashRawEraseServer eraseServer;
    interface TagClient tagClient;
+   method Action reset(Bit#(32) randV);
 endinterface
 
 module mkFlashServer#(FlashCtrlUser flash)(FlashServer);
@@ -103,7 +104,9 @@ module mkFlashServer#(FlashCtrlUser flash)(FlashServer);
    Vector#(NumChips, Reg#(Bool)) eraseStatus <- replicateM(mkRegU());
    Reg#(Bit#(TAdd#(TLog#(NumChips),1))) respMax <- mkReg(0);
    
-   rule doEraseIdle if ( state == IDLE );
+   Reg#(Bool) resetFlag <- mkReg(False);
+   
+   rule doEraseIdle if ( state == IDLE && resetFlag);
       if ( nextWritePtrs[0] + 1 > nextErasePtrs[0] ) begin
          state <= ERASECMD;
          tagReqQ.enq(fromInteger(valueOf(NumChips)));
@@ -248,53 +251,6 @@ module mkFlashServer#(FlashCtrlUser flash)(FlashServer);
          ackStatusQs[1].enq(v);
    endrule
 
-   // FIFOF#(Bool) dumpReqQ <- mkFIFOF;
-   // FIFO#(Tuple2#(BlockT, Bool)) dumpRespQ <- mkFIFO();
-   // Reg#(BlockIdxT) dumpCnt <- mkReg(0);
-   // rule doDump if ( dumpReqQ.notEmpty);
-   //    Bit#(TAdd#(TLog#(NumBlocks), 1)) blkMax = fromInteger(valueOf(NumBlocks));
-   //    if ( extend(dumpCnt) + 1 == blkMax) begin
-   //       dumpReqQ.deq();
-   //       dumpCnt <= 0;
-   //    end
-   //    else begin
-   //       dumpCnt <= dumpCnt + 1;
-   //    end
-      
-   //    blockMap.portB.request.put(BRAMRequest{write: False,
-   //                                           responseOnWrite: False,
-   //                                           address: dumpCnt,
-   //                                           datain: ?
-   //                                           });
-   // endrule
-   
-   // Reg#(BlockIdxT) dumpRespCnt <- mkReg(0);
-   // rule doBumpResp;
-   //    dumpRespCnt <= dumpRespCnt + 1;
-   //    Bit#(TLog#(NumChips)) chipId = truncate(dumpRespCnt >> lgBlkOffset);
-   //    Bit#(TLog#(BlocksPerCE)) blkId = truncate(dumpRespCnt);
-   //    let v <- blockMap.portB.response.get();
-   //    if ( extend(blkId) >= nextNewBlock[chipId] ) begin
-   //       dumpRespQ.enq(tuple2(v, True));
-   //    end
-   //    else begin
-   //       dumpRespQ.enq(tuple2(v, False));
-   //    end
-   // endrule
-         
-   
-   // method Action populateMap(BlockIdxT idx, BlockT data);
-   //    blockMap.portB.request.put(BRAMRequest{write: True,
-   //                                           responseOnWrite: False,
-   //                                           address: idx,
-   //                                           datain: data
-   //                                           });
-         
-   // endmethod
-   // interface Server dumpMap;
-   //    interface Put request = toPut(dumpReqQ);
-   //    interface Get response = toGet(dumpRespQ);
-   // endinterface
    
    interface FlashRawWriteServer writeServer;
       interface Server server;
@@ -326,10 +282,6 @@ module mkFlashServer#(FlashCtrlUser flash)(FlashServer);
       endinterface
    endinterface
    
-   // interface FlashRawEraseServer eraseServer;
-   //    interface Put request = toPut(cmdQ);
-   //    interface Get response = toGet(ackStatusQs[1]);
-   // endinterface
    
    interface TagClient tagClient;
       interface Client reqTag;
@@ -338,6 +290,15 @@ module mkFlashServer#(FlashCtrlUser flash)(FlashServer);
       endinterface
       interface Get retTag = toGet(returnTagQ);
    endinterface
+   
+   method Action reset(Bit#(32) randV);
+      for ( Integer i = 0; i < valueOf(NumChips); i = i + 1 ) begin
+         nextPhysPtrs[i] <= truncate(randV);
+         nextWritePtrs[i] <= 0;
+         nextErasePtrs[i] <= 0;
+      end
+      resetFlag <= True;
+   endmethod
 
 endmodule
 

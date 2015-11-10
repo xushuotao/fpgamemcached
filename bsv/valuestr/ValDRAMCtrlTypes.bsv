@@ -23,6 +23,8 @@ typedef struct {
    Bool doEvict;
    ValSizeT old_nBytes;
    
+   Bit#(64) reqId;
+   
    } CmdType deriving (Bits, Eq);
 
 typedef struct {

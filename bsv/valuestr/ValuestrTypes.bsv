@@ -8,8 +8,6 @@ import Vector::*;
 
 typedef struct{
    Time_t timestamp;
-   Bit#(30) hv;
-   Bit#(2) idx;
    } ValHeader deriving (Bits, Eq);
 
 /* constants definitions */
@@ -34,8 +32,6 @@ typedef struct {
    Bit#(7) initNbytes;
    Bit#(32) numBursts;
    Bool rnw;
-   Bit#(30) hv;
-   Bit#(2) idx;
    } CmdType deriving (Bits, Eq);
 
 typedef struct {

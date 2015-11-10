@@ -29,9 +29,11 @@ module mkDRAMArbiter(DRAMArbiterIfc#(numServers));
    
    Vector#(numServers, FIFOF#(DRAMReq)) reqs<- replicateM(mkFIFOF);
    Vector#(numServers, FIFO#(Bit#(512))) resps<- replicateM(mkFIFO);
+   //Vector#(numServers, FIFO#(Bit#(512))) resps<- replicateM(mkFIFO);
    
    FIFO#(DRAMReq) cmdQ <- mkFIFO;
-   FIFO#(Bit#(512)) dataQ <- mkFIFO;
+   //FIFO#(Bit#(512)) dataQ <- mkFIFO;
+   FIFO#(Bit#(512)) dataQ <- mkSizedFIFO(32);
    
    FIFO#(Bit#(TLog#(numServers))) tagQ <- mkSizedFIFO(32);
    
@@ -80,9 +82,11 @@ module mkDRAM_LOCK_Arbiter_Bypass(DRAM_LOCK_Arbiter_Bypass#(numServers));
    
    Vector#(numServers, FIFOF#(DRAM_LOCK_Req)) reqs<- replicateM(mkFIFOF);
    Vector#(numServers, FIFO#(Bit#(512))) resps<- replicateM(mkFIFO);
+   //Vector#(numServers, FIFO#(Bit#(512))) resps<- replicateM(mkSizedFIFO(32));
    
    FIFO#(DRAM_LOCK_Req) cmdQ <- mkFIFO;
-   FIFO#(Bit#(512)) dataQ <- mkFIFO;
+   //FIFO#(Bit#(512)) dataQ <- mkFIFO;
+   FIFO#(Bit#(512)) dataQ <- mkSizedFIFO(32);
    
    FIFO#(Bit#(TLog#(numServers))) tagQ <- mkSizedFIFO(32);
    
@@ -132,10 +136,12 @@ module mkDRAM_LOCK_Biased_Arbiter_Bypass(DRAM_LOCK_Biased_Arbiter);
    Arbiter_IFC#(2) arbiter <- mkArbiter(True);
    
    Vector#(2, FIFOF#(DRAM_LOCK_Req)) reqs<- replicateM(mkFIFOF);
-   Vector#(2, FIFO#(Bit#(512))) resps<- replicateM(mkFIFO);
+   //Vector#(2, FIFO#(Bit#(512))) resps<- replicateM(mkFIFO());
+   Vector#(2, FIFO#(Bit#(512))) resps<- replicateM(mkSizedFIFO(32));
    
    FIFO#(DRAM_LOCK_Req) cmdQ <- mkFIFO;
-   FIFO#(Bit#(512)) dataQ <- mkFIFO;
+   //FIFO#(Bit#(512)) dataQ <- mkFIFO;
+   FIFO#(Bit#(512)) dataQ <- mkSizedFIFO(32);
    
    FIFO#(Bit#(1)) tagQ <- mkSizedFIFO(32);
    

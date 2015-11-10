@@ -45,7 +45,7 @@ module mkResponseFormatter(ResponseFormatter);
    Reg#(Bit#(32)) reqCnt_1 <- mkReg(0);
    rule doReq;
       let v <- toGet(reqQ).get();
-      $display("Response Formatter:: reqcnt = %d, put hdr = %h, offset = %d", reqCnt_1, v, offset);
+      $display("Response Formatter:: reqcnt = %d, put hdr = %h, opaque = %d, offset = %d", reqCnt_1, v, v.opaque, offset);
       bodylenQ_hdr.enq(v.bodylen);
       if (v.bodylen > 0 ) begin
          bodylenQ_val.enq(v.bodylen);

@@ -25,6 +25,7 @@ typedef struct{
    Bool ignoreLock;
    } DRAM_LOCK_Req deriving(Bits,Eq);
 
+
 typedef Server#(DRAM_LOCK_Req, Bit#(512)) DRAM_LOCK_Server;
 typedef Client#(DRAM_LOCK_Req, Bit#(512)) DRAM_LOCK_Client;
 
@@ -33,6 +34,25 @@ typedef Client#(DRAMReq, Bit#(512)) DRAMClient;
 
 instance Connectable#(DRAMClient, DRAMControllerIfc);
    module mkConnection#(DRAMClient dramClient, DRAMControllerIfc dram)(Empty);
+      rule doCmd;
+         let req <- dramClient.request.get();
+         //$display("DRAMController Req rnw = %d, addr = %d, data = %h, numBytes = %d at %t", req.rnw, req.addr, req.data, req.numBytes,$time);
+         if (req.rnw) 
+            dram.readReq(req.addr, req.numBytes);
+         else
+            dram.write(req.addr, req.data, req.numBytes);
+      endrule
+   
+      rule doData;
+         //$display("DRAMController got read value from DRAMController at %t",$time);
+         let v <- dram.read;
+         dramClient.response.put(v);
+      endrule
+   endmodule
+endinstance
+
+instance Connectable#(DRAM_LOCK_Client, DRAMControllerIfc);
+   module mkConnection#(DRAM_LOCK_Client dramClient, DRAMControllerIfc dram)(Empty);
       rule doCmd;
          let req <- dramClient.request.get();
          //$display("DRAMController Req rnw = %d, addr = %d, data = %h, numBytes = %d at %t", req.rnw, req.addr, req.data, req.numBytes,$time);

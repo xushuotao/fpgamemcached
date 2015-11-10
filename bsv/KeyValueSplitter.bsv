@@ -50,6 +50,7 @@ module mkKeyValueSplitter(KeyValueSplitter);
       end
       else begin
          let keyTokenSrc <- toGet(keyQ).get();
+         $display("%m:: reqCnt = %d, keyValFromBluecache = %h, keyvalFromRequest = %h, matchReg = %d", reqCnt, keyValToken, keyTokenSrc, matchReg);
          if ( byteCnt + 16 < extend(keylen) ) begin
             matchReg <= matchReg && (keyValToken == keyTokenSrc);
          end

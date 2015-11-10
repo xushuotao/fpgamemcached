@@ -78,7 +78,7 @@ typedef struct{
    Bit#(20) hvKey;
    Bit#(8) key_size;
    ValSizeT value_size;
-   Bool rnw;
+   Protocol_Binary_Command opcode;
    } HashtableReqT deriving(Bits, Eq);
 
 typedef struct{
@@ -87,7 +87,7 @@ typedef struct{
    Bit#(8) key_size;
    ValSizeT value_size;
    Time_t time_now;
-   Bool rnw;
+   Protocol_Binary_Command opcode;
    } HdrRdReqT deriving(Bits, Eq);
 
 
@@ -97,7 +97,7 @@ typedef struct{
    Bit#(8) key_size;
    ValSizeT value_size;
    Time_t time_now;
-   Bool rnw;
+   Protocol_Binary_Command opcode;
    Bit#(NumWays) cmpMask;
    Bit#(NumWays) idleMask;
    Vector#(NumWays, ItemHeader) oldHeaders;

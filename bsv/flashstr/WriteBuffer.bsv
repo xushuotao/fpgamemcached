@@ -100,6 +100,7 @@ module mkFlashWriteBuffer(FlashWriteBufIfc);
          end
          //*** if next writeBuf is still being dumped
          else begin
+            $display("blocked");
             block = True;
          end
       end
@@ -108,6 +109,7 @@ module mkFlashWriteBuffer(FlashWriteBufIfc);
       Bit#(TLog#(SuperPageSz)) byteCnt_seg = truncate(byteCnt_seg_V[bufIdx]);
       
       if ( !block ) begin
+         $display("not blocked");
          deAlign.deAlign(truncate(byteCnt_seg), extend(numBytes), bufIdx);
          byteCnt_seg_V[bufIdx] <= byteCnt_seg_V[bufIdx] + extend(numBytes);
          dramReqQ.enq(req);
