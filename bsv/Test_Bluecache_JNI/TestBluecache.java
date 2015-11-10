@@ -1,5 +1,5 @@
-//import BluecacheClient;
 import java.util.*;
+import edu.mit.bluecache.*;
 
 
 public class TestBluecache {
@@ -14,8 +14,10 @@ public class TestBluecache {
 
         System.out.format("Enter number of concurrent request threads: ");
         int threadcount = in.nextInt();
-        System.out.format("Enter number of tests per threads: ");
+        System.out.format("Enter number of sets per threads: ");
         int numTests = in.nextInt();
+        System.out.format("Enter number of gets per threads: ");
+        int numGets = in.nextInt();
 
         
         int [][] keylenArray = new int[threadcount][];
@@ -59,7 +61,7 @@ public class TestBluecache {
 
         System.out.format("Bluecache number of sets = %d, performed within %f\n", numTests*threadcount, diff);
         System.out.format("Bluecache Statistics: Sets %f MRPS\n", (double)(numTests*threadcount)/diff);
-        clients.get(0).avgGetLatency();
+        //clients.get(0).avgGetLatency();
 
         try {
             Thread.sleep(1000);
@@ -76,7 +78,7 @@ public class TestBluecache {
                                                            keyArray[i],
                                                            valArray[i],
                                                            successArray[i],
-                                                           numTests);
+                                                           numGets);
             getthreads.add(clientThread);
         }
 
@@ -98,9 +100,9 @@ public class TestBluecache {
         }
         end_time = System.nanoTime();
         diff = (end_time - start_time)/1e3;
-        System.out.format("Bluecache number of gets = %d, performed within %f\n", numTests*threadcount, diff);
-        System.out.format("Bluecache Statistics: Gets %f MRPS\n", (double)(numTests*threadcount)/diff);
+        System.out.format("Bluecache number of gets = %d, performed within %f\n", numGets*threadcount, diff);
+        System.out.format("Bluecache Statistics: Gets %f MRPS\n", (double)(numGets*threadcount)/diff);
 
-        System.out.format("Average c Get latency = %f\n", clients.get(0).avgGetLatency());
+        //System.out.format("Average c Get latency = %f\n", clients.get(0).avgGetLatency());
     }
 }

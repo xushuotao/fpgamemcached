@@ -1,4 +1,6 @@
 import java.util.*;
+import edu.mit.bluecache.*;
+
 
 public class RequestThread extends Thread{
     private int threadId;
@@ -41,14 +43,13 @@ public class RequestThread extends Thread{
 
     public void run(){
         int pageSz = 8192;
+        Random r = new Random();
         if ( doSet ) {
             // keylenArray = new int[numTests];
             // vallenArray = new int[numTests];
             // keyArray = new byte[numTests][];
             // valArray = new byte[numTests][];
             // successArray = new boolean[numTests];
-
-            Random r = new Random();
             int fails = 0;
             
             for ( int i = 0; i < numTests; i++ ){
@@ -79,25 +80,27 @@ public class RequestThread extends Thread{
             //System.out.println(keyArray.length);
             int fails = 0;
             double diff = 0;
+            int maxsize = keyArray.length;
             for ( int i = 0; i < numTests; i++ ){
                 //byte[] retval = client.get(new String(keyArray[i]));
                 //System.out.format("Java:: Client %d sends request for get\n", client.clientId());
-                long time_start = System.nanoTime();
-                byte[] retval = client.get(keyArray[i]);
-                long time_end = System.nanoTime();
-                diff+=(time_end - time_start)/1e3;
+                int index = r.nextInt(maxsize);
+                //long time_start = System.nanoTime();
+                byte[] retval = client.get(keyArray[index]);
+                //long time_end = System.nanoTime();
+                //diff+=(time_end - time_start)/1e3;
                 // try{
                 //     Thread.sleep(100);
                 // } catch (Exception e){
                 //     e.printStackTrace(System.out);
                 // }
                 if ( retval == null ) fails++;
-                if ( successArray[i] ) {
-                    if ( Arrays.equals(retval, valArray[i])) {
+                if ( successArray[index] ) {
+                    if ( Arrays.equals(retval, valArray[index])) {
                         //System.out.format("Client %d, get %d succeeds\n", threadId, i);
                         //System.exit(0);
                     } else {
-                        System.out.format("Client %d, get %d fails\n", threadId, i);
+                        System.out.format("Client %d, get %d fails\n", threadId, index);
                         // for ( int j = 0; j < keyArray.length; j++){
                         //     System.out.format("Retval[%d] = %x, keyArray[%d] = %x, match = %b\n", j, retval[j], j, keyArray[i][j], retval[j]==keyArray[i][j]);
                         // }
