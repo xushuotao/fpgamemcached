@@ -1,0 +1,19 @@
+Main::Nov  4 2015 17:11:55
+Portal::registerInstance fpga0 fd 4 clients 0
+Portal::registerInstance fpga2 fd 8 clients 0
+Portal::registerInstance fpga5 fd 9 clients 0
+Main::allocating memory...
+portalExec::about to enter loop, numFds=3
+Main::flush and invalidate complete
+MMUIndication::configResp: 2
+MMUIndication::configResp: 3
+ref_srcAlloc=2
+ref_dstAlloc=3
+Init Bluecache: hash table size: 524288(2^19) rows
+Init Bluecache: value store slab 0: size = 65536 bytes (2^16), numEntries = 1(2^0)
+Init Bluecache: value store slab 1: size = 524288 bytes (2^19), numEntries = 128(2^7)
+Init Bluecache: value store slab 2: size = 1048576 bytes (2^20), numEntries = 256(2^8)
+Main:: Memcached init finished
+alloc size=1MB fd=10
+alloc size=1MB fd=11
+Enter number of concurrent clients: Enter number of set requests per threads: Enter number of get requests per threads: 
