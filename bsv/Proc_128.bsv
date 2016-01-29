@@ -35,7 +35,7 @@ import RequestParser::*;
 import JenkinsHash::*;
 import Hashtable::*;
 import KVStoreCompletionBuffer::*;
-import Valuestr::*;
+import FlashValueStore::*;
 import KeyValueSplitter::*;
 import ResponseFormatter::*;
 
@@ -74,12 +74,8 @@ interface MemCachedIfc;
    method Action reset();
    method Action freeWriteBufId(Bit#(32) wp);
    method Action initDMABufSz(Bit#(32) bufSz);
-   method Action initDRAMSeg(Bit#(64) offset);
    interface HashtableInitIfc htableInit;
-   interface ValuestrInitIfc valInit;
-   interface Vector#(3, IndicationServer#(Bit#(32))) indicationServers;
    interface DRAMClient dramClient;
-   //interface FlashPins flashPins;
    interface FlashRawWriteClient flashRawWrClient;
    interface FlashRawReadClient flashRawRdClient;
    interface TagClient tagClient;
@@ -96,33 +92,28 @@ module mkMemCached(MemCachedIfc);
    
    let reqParser <- mkMemReqParser;
    let hash_idx <- mkJenkinsHash_128();
-   //let hash_val <- mkJenkinsHash_128();
-   let htable <- mkAssocHashtb();
+   let htable <- mkAssocHashtb;
    let cmplBuf <- mkKVStoreCompletionBuffer;
-   let valuestr <- mkValueStore();
+   let flashstr <- mkFlashValueStore();
    let kvSplit <- mkKeyValueSplitter;
    let respformat <- mkResponseFormatter;
    DRAMSegmentIfc#(2) dramSeg <- mkDRAMSegments;
 
-   //mkConnection(reqParser.inPipe, re.outPipe);
-   mkConnection(htable.valAllocClient, valuestr.valAllocServer);
-   mkConnection(valuestr.writeUser.writeServer.response, htable.hdrUpdateRequest);
    mkConnection(htable.dramClient, dramSeg.dramServers[0]);
-   mkConnection(valuestr.dramClient, dramSeg.dramServers[1]);
-   
-   
-   //Reg#(Bool) htableInited <- mkReg(False);
-   FIFO#(Bool) initDoneQ <- mkFIFO();
-   // rule waitHtable if (!htableInited);
-   //    if ( htable.init.initialized) begin
-   //       htableInited <= True;
-   //       initDoneQ.enq(True);
-   //    end
+   mkConnection(flashstr.dramClient, dramSeg.dramServers[1]);
+      
+   // rule doInit;
+   //    let v <- htable.init.initialized;
+   //    initDoneQ.enq(v);
    // endrule
-   
-   rule doInit;
-      let v <- htable.init.initialized;
-      initDoneQ.enq(v);
+   Integer dramSz = valueOf(TExp#(30));
+   Integer writeBufSz = valueOf(TMul#(2,TExp#(20)));
+   Integer htableSz = (dramSz - writeBufSz);
+   Reg#(Bool) initFlag <- mkReg(False);
+   rule init if (!initFlag);
+      dramSeg.initializers[0].put(fromInteger(htableSz));
+      dramSeg.initializers[1].put(fromInteger(writeBufSz));
+      initFlag <= True;
    endrule
  
 
@@ -138,11 +129,14 @@ module mkMemCached(MemCachedIfc);
    Reg#(Bool) stall <- mkReg(False);
    
    let tagServer <- mkTagAlloc;
+   
+   //Reg#(Bit#(32)) numReqs <- mkReg(0);
+   Reg#(Bit#(32)) numResps <- mkReg(0);
    rule doHash;
       if ( !stall) begin
          reqCnt_doHash <= reqCnt_doHash + 1;
          let cmd <- reqParser.reqHeader.get();
-         $display("Received Header, reqCnt = %d, opcode = %d, keylen = %d, bodylen = %d", reqCnt_doHash, cmd.opcode, cmd.keylen, cmd.bodylen);
+         $display("Received Header, reqCnt = %d, opcode = %d, keylen = %d, bodylen = %d, opaque = %d", reqCnt_doHash, cmd.opcode, cmd.keylen, cmd.bodylen, cmd.opaque);
          tagServer.reqTag.request.put(1);
          if ( cmd.opcode != PROTOCOL_BINARY_CMD_EOM) begin
             let keylen = cmd.keylen;
@@ -156,6 +150,7 @@ module mkMemCached(MemCachedIfc);
          end
          hash2table.enq(cmd);
          inFlightCmds.incr(1);
+         //numReqs <= numReqs + 1;
       end
       else begin
          if (inFlightCmds == 0 ) begin
@@ -203,7 +198,7 @@ module mkMemCached(MemCachedIfc);
          Bit#(32) hv_idx <- hash_idx.response.get();
          Bit#(32) hv_val <- toGet(firstKeyTokenQ).get();
                   
-         $display("Memcached Calc hash_idx = %h, hash_val = %h", hv_idx, hv_val);
+         $display("Memcached Calc hash_idx = %h, hash_val = %h, opaque = %d", hv_idx, hv_val, cmd.opaque);
       
          // Bool rnw = ?;
          // if ( cmd.opcode == PROTOCOL_BINARY_CMD_SET)
@@ -215,7 +210,8 @@ module mkMemCached(MemCachedIfc);
                                                  hvKey: truncate(hv_val),
                                                  key_size: truncate(keylen),
                                                  value_size: truncate(vallen),
-                                                 opcode: cmd.opcode});
+                                                 opcode: cmd.opcode,
+                                                 reqId: reqId});
       end
    endrule
    
@@ -256,18 +252,18 @@ module mkMemCached(MemCachedIfc);
          let v <- htable.server.response.get();
       
          let status = v.status;
-         let addr = v.value_addr;
+         // let addr = v.value_addr;
          let nBytes = v.value_size;
-         let doEvict = v.doEvict;
-         let hv = v.hv;
-         let idx = v.idx;
-         let old_hv = v.old_hv;
-         let old_nBytes = v.old_nBytes;
+         // let doEvict = v.doEvict;
+         // let hv = v.hv;
+         // let idx = v.idx;
+         // let old_hv = v.old_hv;
+         // let old_nBytes = v.old_nBytes;
          
-         $display("doVal: opcode = %h, onFlash = %d, addr = %d, nBytes = %d, reqId = %d", opcode, addr.onFlash, addr.valAddr, nBytes, reqId);
+         //$display("doVal: opcode = %h, addr = %d, nBytes = %d, reqId = %d, opaque = %d", opcode, addr.onFlash, addr.valAddr, nBytes, reqId, cmd.opaque);
          
 
-         respHdr.bodylen = extend(nBytes) - extend(cmd.keylen);
+         respHdr.bodylen = extend(nBytes);
          respHdr.status = status;
         
                   
@@ -275,21 +271,21 @@ module mkMemCached(MemCachedIfc);
          if (status == PROTOCOL_BINARY_RESPONSE_SUCCESS ) begin
             if (opcode == PROTOCOL_BINARY_CMD_GET) begin
                $display("doVal: Get Cmd, opaque = %d, reqCnt = %d", cmd.opaque, reqCnt);
-               valuestr.readUser.request.put(ValstrReadReqT{addr:addr, nBytes: nBytes, reqId: reqId});
+               //valuestr.readUser.request.put(ValstrReadReqT{addr:addr, nBytes: nBytes, reqId: reqId});
                //kvSplit.server.request.put(tuple2(truncate(cmd.keylen), extend(nBytes)));
                cmplBuf.writeRequest.put(tuple3(truncate(cmd.keylen), cmd.opaque, reqId));
                checkKeys = True;
             end
             else if (opcode == PROTOCOL_BINARY_CMD_SET) begin
                $display("doVal: Set Cmd, opaque = %d, reqCnt = %d", cmd.opaque, reqCnt);
-               valuestr.writeUser.writeServer.request.put(ValstrWriteReqT{addr:extend(pack(addr.valAddr)),
-                                                                          nBytes: nBytes,
-                                                                          hv: hv,
-                                                                          idx: idx,
-                                                                          doEvict: doEvict,
-                                                                          old_hv: old_hv,
-                                                                          old_nBytes: old_nBytes,
-                                                                          reqId: reqId});
+               // valuestr.writeUser.writeServer.request.put(ValstrWriteReqT{addr:extend(pack(addr.valAddr)),
+               //                                                            nBytes: nBytes,
+               //                                                            hv: hv,
+               //                                                            idx: idx,
+               //                                                            doEvict: doEvict,
+               //                                                            old_hv: old_hv,
+               //                                                            old_nBytes: old_nBytes,
+               //                                                            reqId: reqId});
                respHdr.bodylen = 0;
             end 
             else if (opcode == PROTOCOL_BINARY_CMD_DELETE)  begin
@@ -312,6 +308,18 @@ module mkMemCached(MemCachedIfc);
       
    endrule
    
+   rule doConnectFlash;
+      let cmd <- htable.flashClient.request.get();
+      if ( cmd.rnw ) begin
+         flashstr.readServer.readServer.request.put(FlashReadReqT{addr: cmd.addr, numBytes: cmd.numBytes, reqId: cmd.reqId});
+      end
+      else begin
+         flashstr.writeServer.writeServer.request.put(cmd.numBytes);
+      end
+   endrule
+   
+   mkConnection(flashstr.writeServer.writeServer.response, htable.flashClient.response);
+   
    Reg#(Bit#(32)) byteCnt <- mkReg(0);
    rule deqKV;
       let v = deqKVReqQ.first();
@@ -327,7 +335,8 @@ module mkMemCached(MemCachedIfc);
       let d <- toGet(keyValFifo).get();
       if (tpl_1(v)) begin
          if (!tpl_2(d)) begin
-            valuestr.writeUser.writeWord.put(tpl_1(d));
+            //valuestr.writeUser.writeWord.put(tpl_1(d));
+            flashstr.writeServer.writeWord.put(tpl_1(d));
          end
          else begin
             cmplBuf.inPipe.put(tpl_1(d));
@@ -337,7 +346,7 @@ module mkMemCached(MemCachedIfc);
    
    FIFO#(Tuple2#(ValSizeT,TagT)) nextValSize <- mkFIFO();
    rule readCmplBuf;
-      let v <- valuestr.nextRespId.get();
+      let v <- flashstr.readServer.burstSz.get();
       let nBytes = tpl_1(v);
       let reqId = tpl_2(v);
       cmplBuf.readRequest.put(reqId);
@@ -366,7 +375,7 @@ module mkMemCached(MemCachedIfc);
    endrule
    
    rule dokvConn;
-      let d <- valuestr.readUser.response.get;
+      let d <- flashstr.readServer.readServer.response.get();
       kvSplit.keyValInPipe.put(tpl_1(d));
    endrule
    
@@ -404,12 +413,14 @@ module mkMemCached(MemCachedIfc);
       end
       
       rule doResp if ( arbiter.grant_id == fromInteger(i));
+         numResps <= numResps + 1;
          let v <- toGet(respQs[i]).get();
          let hdr = tpl_1(v);
          let reqId = tpl_2(v);
          respformat.hdrPipe.put(hdr);
          inFlightCmds.decr(1);
          tagServer.retTag.put(reqId);
+         $display("Bluecache Pipeline responses from %d, respNum = %d, opaque = %d",i, numResps, hdr.opaque);
       endrule
    end
    
@@ -438,7 +449,7 @@ module mkMemCached(MemCachedIfc);
          else begin
             padCnt <= padCnt + 16;
          end
-         //$display("doDMAWritePad, padCnt = %d",padCnt);
+         $display("doDMAWritePad, padCnt = %d",padCnt);
          outputQ.enq(0);
       end
       else begin
@@ -474,11 +485,9 @@ module mkMemCached(MemCachedIfc);
    
    interface MemServerIfc server;
       interface Put request = reqParser.inPipe;
-      //interface Put request = re.inPipe;
-      interface Get response = toGet(outputQ);// = toGet(resps);
+      interface Get response = toGet(outputQ);
    endinterface
-   interface Get initDone = toGet(initDoneQ);
-   
+    
    interface Get rdDone;
       method ActionValue#(Bit#(32)) get;
          let dummy <- re.server.response.get();
@@ -507,8 +516,6 @@ module mkMemCached(MemCachedIfc);
 
    method Action reset();
       writeBaseQ.clear();
-      dramSeg.reset();
-      valuestr.reset();
    endmethod
       
    method Action freeWriteBufId(Bit#(32) writeBase);
@@ -519,21 +526,13 @@ module mkMemCached(MemCachedIfc);
       dmaBufSz <= bufSz;
    endmethod
                     
-
-   method Action initDRAMSeg(Bit#(64) offset);
-      dramSeg.initializers[0].put(offset);
-      dramSeg.initializers[1].put(fromInteger(dramSize) - offset);
-   endmethod
    
    interface Client dmaReadClient = re.dmaClient;
    interface Client dmaWriteClient = we.dmaClient;
       
    interface HashtableInitIfc htableInit = htable.init;
-   interface ValuestrInitIfc valInit = valuestr.valInit;   
-   interface indicationServers = valuestr.indicationServers;
    interface DRAMClient dramClient = dramSeg.dramClient;
-   //interface FlashPins flashPins = valuestr.flashPins;
-   interface FlashRawWriteClient flashRawWrClient = valuestr.flashRawWrClient;
-   interface FlashRawReadClient flashRawRdClient = valuestr.flashRawRdClient;
-   interface TagClient tagClient = valuestr.tagClient;
+   interface FlashRawWriteClient flashRawWrClient = flashstr.flashRawWrClient;
+   interface FlashRawReadClient flashRawRdClient = flashstr.flashRawRdClient;
+   interface TagClient tagClient = flashstr.tagClient;
 endmodule

@@ -15,14 +15,26 @@ typedef struct{
    Bit#(512) data;
    } DRAMReq deriving(Bits,Eq);
 
+// typedef struct{
+//    Bool rnw;
+//    Bit#(64) addr;
+//    Bit#(7) numBytes;
+//    Bit#(512) data;
+//    Bool lock;
+//    } DRAMReq_LOCK deriving(Bits,Eq);
+
+// typedef Server#(DRAMReq_LOCK, Bit#(512)) DRAMServer;
+// typedef Client#(DRAMReq_LOCK, Bit#(512)) DRAMClient;
+
+
 typedef struct{
    Bool rnw;
    Bit#(64) addr;
    Bit#(7) numBytes;
    Bit#(512) data;
-   Bool initlock;
+    Bool initlock;
    Bool lock;
-   Bool ignoreLock;
+    Bool ignoreLock;
    } DRAM_LOCK_Req deriving(Bits,Eq);
 
 

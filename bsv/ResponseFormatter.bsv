@@ -20,7 +20,7 @@ typedef enum{DoHeader, DoValueTokens} State deriving (Bits, Eq);
 
 typedef BytesOf#(Protocol_Binary_Response_Header) RespHeaderBytes;
 
-(*synthesize*)
+//(*synthesize*)
 module mkResponseFormatter(ResponseFormatter);
    /*FIFO#(Bit#(32)) reqQ <- mkFIFO;
    FIFO#(Bit#(32)) reqQ_1 <- mkFIFO;*/
@@ -45,7 +45,7 @@ module mkResponseFormatter(ResponseFormatter);
    Reg#(Bit#(32)) reqCnt_1 <- mkReg(0);
    rule doReq;
       let v <- toGet(reqQ).get();
-      $display("Response Formatter:: reqcnt = %d, put hdr = %h, opaque = %d, offset = %d", reqCnt_1, v, v.opaque, offset);
+
       bodylenQ_hdr.enq(v.bodylen);
       if (v.bodylen > 0 ) begin
          bodylenQ_val.enq(v.bodylen);
@@ -53,6 +53,7 @@ module mkResponseFormatter(ResponseFormatter);
       end
       
       Bool eom = False;
+
       if ( v.opcode == PROTOCOL_BINARY_CMD_EOM ) begin
          eom = True;
          offset <= 0;
@@ -62,7 +63,7 @@ module mkResponseFormatter(ResponseFormatter);
          offset <= truncate(extend(offset) + 8 + v.bodylen);
          reqCnt_1 <= reqCnt_1 + 1;
       end
-      
+      $display("Response Formatter:: reqcnt = %d, put hdr = %h, keylen = %d, vallen = %d, eom = %d, opaque = %d, offset = %d", reqCnt_1, v, v.keylen, v.bodylen, eom, v.opaque, offset);      
       deAlign_hdr[sel_req].deAlign(offset, fromInteger(valueOf(RespHeaderBytes)), eom);
       sel_req <= sel_req + 1;
       headerQ.enq(v);
