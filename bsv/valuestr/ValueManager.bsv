@@ -65,7 +65,7 @@ function Bit#(2) findLRU(Vector#(4, ValHeader) x);
 endfunction
 
 
-(*synthesize*)
+//(*synthesize*)
 module mkValManager(ValManage_ifc);
    
    /* initialization registers */
@@ -116,6 +116,7 @@ module mkValManager(ValManage_ifc);
    
    //FIFO#(Maybe#(Bit#(2))) whichBinFifo <- mkBypassFIFO();
    FIFO#(Maybe#(Bit#(2))) whichBinFifo <- mkFIFO();
+   FIFO#(Bool) rtnNewQ <- mkFIFO();
    FIFOF#(Tuple2#(Maybe#(Bit#(32)),Bit#(2))) toRdHeader <- mkFIFOF();
    
    FIFO#(DRAM_ACK_Req) dramCmdQ <- mkFIFO();
@@ -180,15 +181,18 @@ module mkValManager(ValManage_ifc);
          $display("whichbin = %d", whichBin);
       end
       whichBinFifo.enq(whichBin);
+      rtnNewQ.enq(req_new);
            
    endrule
-
+   Reg#(Bit#(32)) reqCnt_2 <- mkReg(0);
+   Reg#(Bit#(32)) reqCnt_3 <- mkReg(0);
    SFifo#(NUM_STAGES, Bit#(32), Bit#(32)) sfifo <- mkCFSFifo(eq);      
    Reg#(Bool) lock <- mkReg(False);
    rule alloc_Addr if (!lock);
       let whichBinData = whichBinFifo.first;
       whichBinFifo.deq();
       let whichBin = fromMaybe(?, whichBinData);
+      let returnNew <- toGet(rtnNewQ).get();
       
       Maybe#(Bit#(32)) newAddr = tagged Invalid;      
       if ( isValid(whichBinData) ) begin
@@ -229,15 +233,19 @@ module mkValManager(ValManage_ifc);
          newAddr = tagged Valid 0;
       end
       
-      $display("Addr = %d", fromMaybe(?, newAddr));
-      if (!isValid(newAddr)) begin
+      $display("ValManager:: Addr = %d, reqCnt = %d", fromMaybe(?, newAddr), reqCnt_3);
+      reqCnt_3 <= reqCnt_3 + 1;
+      if (!isValid(newAddr) && returnNew) begin
          $display("Out of addresses for bin = %d", whichBin);
          toRdHeader.enq(tuple2(newAddr, whichBin));
          lock <= True;
       end
       else begin
          outputFifo.enq(ValAllocRespT{newAddr: fromMaybe(?, newAddr), doEvict: False});
-         sfifo.enq(fromMaybe(?,newAddr));
+         $display("ValManager:: new non-evict addr = %d found, reqCnt = %d", fromMaybe(?, newAddr), reqCnt_2);
+         reqCnt_2 <= reqCnt_2 + 1;
+         if ( returnNew)
+            sfifo.enq(fromMaybe(?,newAddr));
       end
    endrule
       
@@ -255,7 +263,7 @@ module mkValManager(ValManage_ifc);
    //Vector#(4, Reg#(Bit#(32))) addrBuf <- replicateM(mkRegU());
    Reg#(Maybe#(Bit#(32))) retval_Reg <- mkRegU();
    Reg#(Bit#(2)) whichBin_reg <- mkRegU();
-   Reg#(Bit#(32)) reqCnt_2 <- mkReg(0);
+
    FIFO#(Bit#(32)) addrFIFO <- mkFIFO();
    
    
@@ -379,7 +387,7 @@ module mkValManager(ValManage_ifc);
       if (respCnt + 1 == 0 ) begin
          let ind = findLRU(new_hdBuf);
          let hdr = new_hdBuf[ind];
-         $display("ValManager:: eviction addr found, reqCnt", reqCnt_2);
+         $display("ValManager:: eviction addr = %d found, reqCnt", addrBuf[ind], reqCnt_2);
          reqCnt_2 <= reqCnt_2 + 1;
          outputFifo.enq(ValAllocRespT{newAddr: addrBuf[ind], doEvict: True, oldNBytes: hdr.nBytes, hv: hdr.hv, idx: hdr.idx});
          sfifo.enq(addrBuf[ind]);

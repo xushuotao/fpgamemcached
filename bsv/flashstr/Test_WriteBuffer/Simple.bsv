@@ -32,18 +32,18 @@ import GetPut::*;
 import ControllerTypes::*;
 import ValDRAMCtrlTypes::*;
 import ValFlashCtrlTypes::*;
-import DRAMPartioner::*;
+
 import SerDes::*;
 import WriteBuffer::*;
 
 interface SimpleIndication;
-   method Action getVal(Bit#(64) v);
+   method Action getVal(Bit#(64) v, Bit#(32) tag);
    method Action wrAck(Bit#(64) v);
 endinterface
 
 
 interface SimpleRequest;
-   method Action readReq(Bit#(64) startAddr, Bit#(64) nBytes);
+   method Action readReq(Bit#(64) startAddr, Bit#(64) nBytes, Bit#(32) reqId);
    
    method Action writeReq(Bit#(64) nBytes);
    method Action writeVal(Bit#(64) wrVal);
@@ -65,19 +65,7 @@ module mkSimpleRequest#(SimpleIndication indication)(SimpleRequest);
    
    let wrBuf <- mkFlashWriteBuffer;
    
-   DRAMSegmentIfc#(2) dramPar <- mkDRAMSegments;
-   
-   mkConnection(dramPar.dramServers[0], wrBuf.dramClients[0]);
-   mkConnection(dramPar.dramServers[1], wrBuf.dramClients[1]);
-   
-   Reg#(Bool) initFlag <- mkReg(False);
-   rule init if (!initFlag);
-      dramPar.initializers[0].put(fromInteger(valueOf(SuperPageSz)));
-      dramPar.initializers[1].put(fromInteger(valueOf(SuperPageSz)));
-      initFlag <= True;
-   endrule
-   
-   mkConnection(dramPar.dramClient, dramController);
+   mkConnection(wrBuf.dramClient, dramController);
 
    
    FIFO#(Tuple2#(Bit#(64), Bit#(64))) rdRqQ <- mkFIFO;
@@ -104,8 +92,10 @@ module mkSimpleRequest#(SimpleIndication indication)(SimpleRequest);
    
    rule drRdResp;
       let v <- wrBuf.readUser.readVal.get();
-      $display("%h, %d",v, v);
-      indication.getVal(v);
+      let data = tpl_1(v);
+      let tag = tpl_2(v);
+      $display("%h, %d",data, tag);
+      indication.getVal(data, extend(tag));
    endrule
   
    Reg#(Bit#(29)) reqAddr <- mkReg(0);
@@ -120,7 +110,7 @@ module mkSimpleRequest#(SimpleIndication indication)(SimpleRequest);
    endrule
    
    FIFO#(Bit#(32)) numBytesQ <- mkFIFO();
-   DeserializerIfc#(64, 512) des <- mkDeserializer();
+   DeserializerIfc#(64, 512, Bit#(0)) des <- mkDeserializer();
    FIFO#(Bit#(64)) wDataWord <- mkFIFO;
       
    mkConnection(toGet(wDataWord), des.demarshall);
@@ -134,18 +124,18 @@ module mkSimpleRequest#(SimpleIndication indication)(SimpleRequest);
          Bit#(3) remainder = truncate(numBytes - byteCnt_des);
          if ( remainder != 0)
             numWords = numWords + 1;
-         des.request(numWords);
+         des.request(numWords, ?);
       end
       else begin
          byteCnt_des <= byteCnt_des + 64;
-         des.request(8);
+         des.request(8, ?);
       end
    endrule
    
    rule doConn;
       let v <- des.getVal;
       //$display("wrBuf writeWord %h", v);
-      wrBuf.writeUser.writeWord.put(v);
+      wrBuf.writeUser.writeWord.put(tpl_1(v));
    endrule
 
    rule doWrAck;
@@ -153,9 +143,9 @@ module mkSimpleRequest#(SimpleIndication indication)(SimpleRequest);
       indication.wrAck(extend(pack(v)));
    endrule
    
-   method Action readReq(Bit#(64) startAddr, Bit#(64) nBytes);
+   method Action readReq(Bit#(64) startAddr, Bit#(64) nBytes, Bit#(32) reqId);
       //rdRqQ.enq(tuple2(startAddr, nBytes));
-      wrBuf.readUser.readReq.put(FlashReadReqT{addr: unpack(truncate(startAddr)), numBytes: truncate(nBytes)});
+      wrBuf.readUser.readReq.put(FlashReadReqT{addr: unpack(truncate(startAddr)), numBytes: truncate(nBytes), reqId: truncate(reqId)});
    endmethod
    
    method Action writeReq(Bit#(64) nBytes);

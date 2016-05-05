@@ -32,6 +32,9 @@ import ChipscopeWrapper::*;
 
 import GetPut::*;
 import ClientServer::*;
+import Connectable::*;
+
+import DRAMArbiter::*
 
 import PortalMemory::*;
 import MemTypes::*;
@@ -71,6 +74,7 @@ module mkSimple#(SimpleIndication indication, DRAMControllerIfc dram, DebugVal p
    
    let valstr <- mkValRawAccess(clock, dram);
    
+   mkConnection(valstr.dramClient,dram);
    //FIFO#(Tuple3#(Bit#(64), Bit#(64), Bit#(32))) rdRqQ <- mkFIFO;
   // FIFO#(Tuple3#(Bit#(64), Bit#(64), Bit#(32))) wrRqQ <- mkFIFO;
   // FIFO#(Bit#(64)) wrValQ <- mkFIFO();

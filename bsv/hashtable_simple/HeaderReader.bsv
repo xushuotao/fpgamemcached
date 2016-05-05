@@ -19,7 +19,7 @@ interface HeaderReaderIfc;
    interface Put#(HdrRdReqT) request;
    interface Get#(HdrWrReqT) response;
    interface Put#(Bool) wrAck;
-   interface SFifo#(NUM_STAGES, HashValueT, HashValueT) sFifoPort;
+   //interface SFifo#(NUM_STAGES, HashValueT, HashValueT) sFifoPort;
    interface DRAMClient dramClient;
 endinterface
  
@@ -37,26 +37,19 @@ module mkHeaderReader(HeaderReaderIfc);
    
    
    SFifo#(NUM_STAGES, HashValueT, HashValueT) sFifo <- mkCFSFifo(eq);
-   SFifo#(NUM_STAGES, HashValueT, HashValueT) sFifo_1 <- mkCFSFifo(eq);
-   
-   //FIFO#(HashValueT) dram_pre <- mkSizedFIFO(numStages);
    FIFO#(HashValueT) reqQ <- mkSizedFIFO(numStages);
+   //rule doDRAMCmd if ( !sFifo.search(reqQ.first.hv) );
    rule doDRAMCmd if ( !sFifo.search(reqQ.first) );
+      //let args <- toGet(reqQ).get();
+      //let hv = args.hv;
       let hv <- toGet(reqQ).get();
       $display("Header Reader Starts for hv = %h, addr = %d, ReqCnt = %d", hv, hv << 6, reqCnt);
       reqCnt <= reqCnt + 1;
       dramCmdQ.enq(DRAMReq{rnw: True, addr: extend(hv << 6), numBytes:64});
-      //dram_pre.enq(hv);
       sFifo.enq(hv);
-      //sFifo_1.enq(hv);
       //immQ.enq(args);
    endrule
-      
-   // rule doDRAMCmdRaw;
-   //    let hv <- toGet(dram_pre).get();
-   //    dramCmdQ.enq(DRAMReq{rnw: True, addr: extend(hv << 6), numBytes:64});
-   // endrule
-   
+
    
    rule procHeader;
       let d <- toGet(dramDtaQ).get();
@@ -90,7 +83,8 @@ module mkHeaderReader(HeaderReaderIfc);
                           opcode: args.opcode,
                           cmpMask: cmpMask_temp,
                           idleMask: idleMask_temp,
-                          oldHeaders: headers
+                          oldHeaders: headers,
+                          reqId: args.reqId
                           });
    endrule
 
@@ -107,13 +101,10 @@ module mkHeaderReader(HeaderReaderIfc);
    interface Put request;// = toPut(reqQ);
       method Action put(HdrRdReqT v);
          reqQ.enq(v.hv);
-         sFifo_1.enq(v.hv);
          immQ.enq(v);
-      endmethod
-   endinterface
-      
+         endmethod
+      endinterface
    interface Get response = toGet(respQ);
    interface Put wrAck = toPut(wrAckQ);
-   interface SFifo sFifoPort = sFifo_1;
    interface DRAMClient dramClient = toClient(dramCmdQ, dramDtaQ);
 endmodule

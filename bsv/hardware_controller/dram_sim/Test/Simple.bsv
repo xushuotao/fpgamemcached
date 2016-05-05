@@ -24,6 +24,7 @@
 //import FIFO::*;
 import DDR3Sim::*;
 import DRAMController::*;
+import Connectable::*;
 
 typedef struct{
    Bit#(64) v7;
@@ -98,7 +99,9 @@ module mkSimpleRequest#(SimpleIndication indication)(SimpleRequest);
    
    let ddr3_ctrl_user <- mkDDR3Simulator();
    
-   let dram <- mkDRAMController(ddr3_ctrl_user);
+   let dram <- mkDRAMController;
+   
+   mkConnection(dram.ddr3_cli, ddr3_ctrl_user);
    
    rule process;
       let data <- dram.read;
@@ -106,10 +109,12 @@ module mkSimpleRequest#(SimpleIndication indication)(SimpleRequest);
    endrule
    
    method Action readReq(Bit#(64) addr, Bit#(7) bytes);
+      $display("Request: read addr = %d, bytes = %d", addr,  bytes);
       dram.readReq(addr, bytes);
    endmethod
    
    method Action write(Bit#(64) addr, DDRLine data, Bit#(7) bytes);
+      $display("Request: write addr = %d, data = %h, bytes = %d", addr, pack(data), bytes);
       dram.write(addr, pack(data), bytes);
    endmethod
   

@@ -195,6 +195,7 @@ module mkDRAM_LOCK_Segments(DRAM_LOCK_SegmentIfc#(numServers));
       end
    endrule
       
+   FIFO#(Bit#(64)) debugAddrQ <- mkSizedFIFO(32);
    for (Integer i = 0; i < valueOf(numServers); i = i + 1) begin
       rule doReqs_0 if ((reqs[i].first.ignoreLock || fromInteger(i) == fromMaybe(fromInteger(i),lockReg)) && init);
          arbiter.clients[i].request;
@@ -206,9 +207,10 @@ module mkDRAM_LOCK_Segments(DRAM_LOCK_SegmentIfc#(numServers));
          if (req.addr < segSizes[i] ) begin
             //$display("%m:: req.addr = %d, baseAddr[%d] = %d", req.addr, i, baseAddrs[i]);
             `endif
+            $display("%m cmd i = %d, lock = %d, ignoreLock = %d, rnw = %d, addr = %d, numBytes = %d", i, req.lock, req.ignoreLock, req.rnw, req.addr, req.numBytes);
             req.addr = req.addr + baseAddrs[i];
             cmdQ.enq(DRAMReq{rnw: req.rnw, addr: req.addr, data: req.data, numBytes: req.numBytes});
-            $display("cmd i = %d, lock = %d, ignoreLock = %d", i, req.lock, req.ignoreLock);
+
             $display(lockReg);
             
             if (!req.ignoreLock) begin
@@ -229,6 +231,8 @@ module mkDRAM_LOCK_Segments(DRAM_LOCK_SegmentIfc#(numServers));
             
             if (req.rnw) begin
                tagQ.enq(fromInteger(i));
+               
+               debugAddrQ.enq(req.addr);
             end
             `ifdef BSIM
          end
@@ -239,6 +243,8 @@ module mkDRAM_LOCK_Segments(DRAM_LOCK_SegmentIfc#(numServers));
       endrule
       
       rule doResp if ( tagQ.first() == fromInteger(i));
+         $display("%m return data for addr = %d, to client %d", debugAddrQ.first(), i);
+         debugAddrQ.deq();
          let data = dataQ.first;
          resps[i].enq(data);
          tagQ.deq();

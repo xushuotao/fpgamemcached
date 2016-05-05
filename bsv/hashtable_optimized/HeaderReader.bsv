@@ -28,7 +28,11 @@ module mkHeaderReader#(DRAMReadIfc dramEP)(HeaderReaderIfc);
    
    rule procHeader;
       let d <- dramEP.response.get();
-      Vector#(NumWays, ItemHeader) headers = unpack(d);
+      Vector#(NumWays, ItemHeader) headers;
+      Vector#(NumWays, Bit#(TDiv#(512, NumWays))) dataV = unpack(d);
+      for (Integer i = 0; i < 4; i = i + 1) begin
+         headers[i] = truncate(dataV[i]);
+      end
       Bit#(NumWays) cmpMask_temp = 0;
       Bit#(NumWays) idleMask_temp = 0;
       

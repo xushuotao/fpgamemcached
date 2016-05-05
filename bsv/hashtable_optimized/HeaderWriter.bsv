@@ -3,12 +3,14 @@ import FIFOF::*;
 import SpecialFIFOs::*;
 import GetPut::*;
 import Vector::*;
+import ClientServer::*;
+import ClientServerHelper::*;
 
 import HashtableTypes::*;
 import HtArbiterTypes::*;
 import HtArbiter::*;
 import Time::*;
-import Valuestr::*;
+import ValueManager::*;
 
 import ParameterTypes::*;
 
@@ -46,57 +48,112 @@ interface HeaderWriterIfc;
    method Action start(HdrWrParas hdrRdParas);
    method ActionValue#(KeyWrParas) finish();
    method ActionValue#(HtRespType) getValAddr();
+
+   interface Put#(HeaderUpdateReqT) hdrUpdateRequest;
+   interface Client#(DRAMReq, Bool) hdrUpdDramClient;
+   
+   interface ValAllocClient valAllocClient;
+   
+
 endinterface
 
-module mkHeaderWriter#(ValAlloc_ifc valAlloc, DRAMWriteIfc dramEP)(HeaderWriterIfc);
+typedef struct{
+   HtRespType retval;
+   
+   ItemHeader newhdr;
+   Bool newValue;
+   KeyWrParas args;
+   
+   } HeaderWriterPipeT deriving (Bits, Eq);
+
+module mkHeaderWriter#(DRAMWriteIfc dramEP)(HeaderWriterIfc);
    //FIFO#(Tuple3#(Bit#(64), Bit#(64), Bool)) valAddrFifo <- mkSizedFIFO(8);
    //FIFO#(Tuple3#(Bit#(64), Bit#(64), Bool)) valAddrFifo <- mkSizedFIFO(numStages);
    FIFO#(HtRespType) valAddrFifo <- mkSizedFIFO(numStages);
    FIFO#(ItemHeader) newHeaderQ <- mkFIFO;
    
+   FIFO#(ValAllocReqT) valReqQ <- mkFIFO();
+   FIFO#(ValAllocRespT) valRespQ <- mkFIFO();
+
    
    //FIFO#(Tuple3#(Bit#(64), Bit#(64), Bool)) pre_valAddrFifo <- mkFIFO();
-   FIFO#(HtRespType) pre_valAddrFifo <- mkFIFO();
-   
-   FIFO#(ItemHeader) pre_hdr <- mkFIFO();
-   FIFO#(Bool) new_val <- mkFIFO();
+   //FIFO#(HtRespType) pre_valAddrFifo <- mkFIFO();
+   //FIFO#(ItemHeader) pre_hdr <- mkFIFO();
+   //FIFO#(Bool) new_val <- mkFIFO();
+   //FIFO#(KeyWrParas) pre_immediateQ <- mkFIFO;
+   FIFO#(HeaderWriterPipeT) stageQ <- mkFIFO;
    FIFO#(KeyWrParas) immediateQ <- mkFIFO;
    FIFO#(KeyWrParas) finishQ <- mkFIFO;
    
    //FIFOF#(Bit#(32)) currhv <- mkLFIFOF();
    
-
+   FIFO#(HeaderUpdateReqT) hdrUpdQ <- mkFIFO();
 
    //PacketIfc#(LineWidth, HeaderSz, 0) packetEng_hdr <- mkPacketEngine();
    //PacketIfc#(128, 232, 0) packetEng_hdr <- mkPacketEngine(); 
 
    //(*descending_urgency = "prepWrite_1, start"*)
    
-   rule prepWrite_1;
-      //$display("%h",old_header[ind]);
-      let newValue <- toGet(new_val).get();
-      let retval <- toGet(pre_valAddrFifo).get();
-      let newhdr <- toGet(pre_hdr).get();
+   FIFO#(Tuple3#(Bit#(64), Bit#(2), FlashAddrType)) flashReqQ <- flashReq;
+   
+   FIFO#(DRAMReq) dramReqQ <- mkFIFO();
+   FIFO#(Bool) dramRespQ <- mkFIFO();
+   
+   FIFOF#(PhyAddr) outstandingHdrUpdQ <- mkFIFOF;
+   rule doHdrUpdQ;
+      let v <- toGet(hdrUpdQ).get();
+      let hv = v.hv;
+      let idx = v.idx;
+      PhyAddr baseAddr = (unpack(zeroExtend(hv)) * fromInteger(valueOf(ItemOffset))) << 6;
+      let wrAddr = baseAddr + (zeroExtend(ind) << valueOf(LgLineBytes));
       
-      if ( newValue ) begin
-         let newValAddr <- valAlloc.newAddrResp();
-         let args = immediateQ.first();
-         newHeaderQ.enq(ItemHeader{keylen : args.keyLen, // key length
-                                   valAddr : newValAddr,//zeroExtend(hv), 
-                                   currtime : args.time_now,// last accessed time
-                                   nBytes : truncate(args.nBytes) //
-                                   });
-         $display("valAddFifo.enq, addr = %d, nBytes = %d, hit = %b", newValAddr, args.nBytes, True);
-         //valAddrFifo.enq(tuple3(newValAddr, args.nBytes, True));
-         retval.addr = newValAddr;
-         retval.nBytes = args.nBytes;
-         retval.hit = True;
+      dramReqQ.enq(DRAMReq{rnw:False, addr: wrAddr, data:extend(ValAddrT{onFlash:True, valAddr: extend(v.flashAddr)}), numBytes:fromInteger(TDiv#(SizeOf#(ValAddrT), 8))});
+      
+      outstandintHdrUpdQ.enq(wrAddr);
+   endrule
+   
+   rule doHdrUpdResp;
+      let v <- toGet(dramRespQ).get();
+      outstandingHdrUpdQ.deq();
+   endrule
+   
+   rule prepWrite_1;
+      Bool proceed = True;
+      if ( outstandingHdrUpdQ.notEmpty) begin
+         if ( outstandingHdrUpdQ.first == stageQ.first.args.wrAddr )
+            proceed = False;
       end
-      else begin
-         //valAddrFifo.enq(retval);
-         newHeaderQ.enq(newhdr);
+
+      if ( proceed) begin
+         let v <- toGet(stageQ).get();
+         let newValue = v.newValue;
+         let retval = v.retval;
+         let args = v.args;
+         
+         immediateQ.enq(args);
+         
+         if ( newValue ) begin
+            let newValAddr <- toGet(valRespQ).get();
+            newHeaderQ.enq(ItemHeader{keylen : args.keyLen, // key length
+                                      valAddr : ValAddrT{onFlash:False, valAddr: zeroExtend(newValAddr.newAddr)},//zeroExtend(hv), 
+                                      currtime : args.time_now,// last accessed time
+                                      nBytes : truncate(args.nBytes) //
+                                      });
+            $display("valAddFifo.enq, addr = %d, nBytes = %d, hit = %b", newValAddr.newAddr, args.nBytes, True);
+            //valAddrFifo.enq(tuple3(newValAddr, args.nBytes, True));
+            retval.addr = newValAddr.newAddr;
+            retval.nBytes = args.nBytes;
+            retval.oldNbytes = newValAddr.oldNBytes;
+            retval.hit = True;
+            retval.doEvict = newValAddr.doEvict;
+            outstandingHdrUpdQ.enq(args.wrAddr);
+         end
+         else begin
+            //valAddrFifo.enq(retval);
+            newHeaderQ.enq(newhdr);
+         end
+         valAddrFifo.enq(retval);
       end
-      valAddrFifo.enq(retval);
    endrule
    
    rule writeHeader;
@@ -133,22 +190,17 @@ module mkHeaderWriter#(ValAlloc_ifc valAlloc, DRAMWriteIfc dramEP)(HeaderWriterI
          // update the timestamp in the header;
          ind = mask2ind(cmpMask);
          
-         //old_header[ind].refcount = old_header[ind].refcount + 1;
          old_header[ind].currtime = args.time_now;
                            
-         //retval = tuple3(old_header[ind].valAddr, extend(old_header[ind].nBytes), True);
          retval.addr = old_header[ind].valAddr;
-         retval.nBytes = extend(old_header[ind].nBytes);
+         retval.nBytes = old_header[ind].nBytes;
          retval.hit = True;
          
          newhdr = old_header[ind];
-         /*valAddrFifo.enq(tuple3(old_header[ind].valAddr, extend(old_header[ind].nBytes), True));
-         newHeaderQ.enq(old_header[ind]);*/
+         
       end
       else if (args.rnw) begin
-         //retval = tuple3(?,?,False);
          retval.hit = False;
-         //valAddrFifo.enq(tuple3(?, ?, False));
          doWrite = False;
       end
       else begin
@@ -164,15 +216,21 @@ module mkHeaderWriter#(ValAlloc_ifc valAlloc, DRAMWriteIfc dramEP)(HeaderWriterI
                timestamps[i] = old_header[i].currtime;
             end
             ind = findLRU(timestamps);
-            trade_in = True;
+            if ( !old_header[i].valAddr.onFlash )
+               trade_in = True;
          end
          
-         valAlloc.newAddrReq(args.nBytes, old_header[ind].valAddr, trade_in);
+         //valAlloc.newAddrReq(args.nBytes, old_header[ind].valAddr, trade_in);
+         valReqQ.enq(ValAllocReqT{nBytes: extend(args.nBytes),
+                                  oldAddr: truncate(old_header[ind].valAddr),
+                                  oldNBytes: extend(old_header[ind].nBytes),
+                                  trade_in: trade_in});
          /* more interesting stuff to do here */
          // update a new header if no hit
          newVal = True;
       end
-   
+      
+      retval.doEvict = False;
       retval.hv = truncate(args.hv);
       retval.idx = ind;
    
@@ -183,18 +241,21 @@ module mkHeaderWriter#(ValAlloc_ifc valAlloc, DRAMWriteIfc dramEP)(HeaderWriterI
       pre_hdr.enq(newhdr);
       new_val.enq(newVal);
    
-      immediateQ.enq(KeyWrParas{hv: args.hv,
-                                idx: args.idx,
-                                hdrAddr: args.hdrAddr + (zeroExtend(ind) << valueOf(LgLineBytes)),
-                                hdrNreq: args.hdrNreq,
-                                keyAddr: args.keyAddr + (zeroExtend(ind) << valueOf(LgLineBytes)),
-                                keyNreq: args.keyNreq,
-                                keyLen: args.keyLen,
-                                nBytes: args.nBytes,
-                                time_now: args.time_now,
-                                cmpMask: args.cmpMask,
-                                idleMask: args.idleMask,
-                                byPass: !doWrite});
+      stageQ.enq(HeaderWriterPipeT{retval: retval,
+                                   newhdr: newhdr,
+                                   newValue: newVal,
+                                   args: KeyWrParas{hv: args.hv,
+                                                    idx: args.idx,
+                                                    hdrAddr: args.hdrAddr + (zeroExtend(ind) << valueOf(LgLineBytes)),
+                                                    hdrNreq: args.hdrNreq,
+                                                    keyAddr: args.keyAddr + (zeroExtend(ind) << valueOf(LgLineBytes)),
+                                                    keyNreq: args.keyNreq,
+                                                    keyLen: args.keyLen,
+                                                    nBytes: args.nBytes,
+                                                    time_now: args.time_now,
+                                                    cmpMask: args.cmpMask,
+                                                    idleMask: args.idleMask,
+                                                    byPass: !doWrite}});
    endmethod
    
    method ActionValue#(KeyWrParas) finish();
@@ -205,5 +266,12 @@ module mkHeaderWriter#(ValAlloc_ifc valAlloc, DRAMWriteIfc dramEP)(HeaderWriterI
       let v <- toGet(valAddrFifo).get;
       return v;
    endmethod
+
+   interface Put hdrUpdateRequest = toPut(hdrUpdQ);
+   
+   //interface Get dramRequest = toGet(dramReqQ);
+   interface Client hdrUpdDRAMClient = toClient(dramReqQ, dramRespQ);
+   
+   interface ValAllocClient valAllocClient = toClient(valReqQ, valRespQ);
    
 endmodule

@@ -1,18 +1,28 @@
 import Time::*;
 import Vector::*;
+import ValDRAMCtrlType::*;
+
+typedef struct{
+   Bool onFlash;
+   Bit#(47) valAddr;
+   } ValAddrT deriving (Bits, Eq);
 
 
 typedef struct{
 //   Bit#(8) idle;
+   Bit#(20) hvKey;
+   
    Bit#(8) keylen; // key length
 //   Bit#(8) clsid; // slab class id
-   Bit#(64) valAddr; // valueStore address
+
 //   Bit#(16) refcount;
 //   Time_t exptime; // expiration time
    Time_t currtime;// last accessed time
-   Bit#(24) nBytes; // 16MB
+   ValSizeT nBytes; // 1MB
+   
+   
+   ValAddrT ; // valueStore address
    } ItemHeader deriving(Bits, Eq);
-
 //`define HEADER_64_ALIGNED;
 
 /* constants definition */
@@ -57,10 +67,14 @@ typedef 0 DtaShfitSz;
 typedef TSub#(64, DtaShiftSz) KeyShiftSz;
 */
 
+
+
 typedef struct{
-   Bit#(64) addr;
-   Bit#(64) nBytes;
+   ValAddrT addr;
+   ValSizeT nBytes;
+   ValSizeT oldNbytes;
    Bool hit;
+   Bool doEvict;
    Bit#(30) hv;
    Bit#(2) idx;
    } HtRespType deriving (Bits, Eq);
@@ -73,7 +87,7 @@ typedef struct{
    PhyAddr keyAddr;
    Bit#(8) keyNreq;
    Bit#(8) keyLen;
-   Bit#(64) nBytes;
+   ValSizeT nBytes;
    Time_t time_now;
    Bool rnw;
    } HdrRdParas deriving(Bits, Eq);
@@ -87,7 +101,7 @@ typedef struct{
    PhyAddr keyAddr;
    Bit#(8) keyNreq;
    Bit#(8) keyLen;
-   Bit#(64) nBytes;
+   ValSizeT nBytes;
    Time_t time_now;
    Bit#(NumWays) cmpMask;
    Bit#(NumWays) idleMask;
@@ -103,7 +117,7 @@ typedef struct{
    PhyAddr keyAddr;
    Bit#(8) keyNreq;
    Bit#(8) keyLen;
-   Bit#(64) nBytes;
+   ValSizeT nBytes;
    Time_t time_now;
    Bit#(NumWays) cmpMask;
    Bit#(NumWays) idleMask;
@@ -119,9 +133,16 @@ typedef struct{
    PhyAddr keyAddr;
    Bit#(8) keyNreq;
    Bit#(8) keyLen;
-   Bit#(64) nBytes;
+   ValSizeT nBytes;
    Time_t time_now;
    Bit#(NumWays) cmpMask;
    Bit#(NumWays) idleMask;
    Bool byPass;
    } KeyWrParas deriving(Bits, Eq);
+
+
+typedef struct{
+   Bit#(32) hv;
+   Bit#(2) idx;
+   FlashAddrType flashAddr;
+   } HeaderUpdateReqT deriving(Bits, Eq);

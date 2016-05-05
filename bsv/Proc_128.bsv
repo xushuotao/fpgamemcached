@@ -349,7 +349,8 @@ module mkMemCached(MemCachedIfc);
       let v <- flashstr.readServer.burstSz.get();
       let nBytes = tpl_1(v);
       let reqId = tpl_2(v);
-      cmplBuf.readRequest.put(reqId);
+      //cmplBuf.readRequest.put(reqId);
+      cmplBuf.readRequest.put(tuple2(reqId, False));
       nextValSize.enq(tuple2(nBytes, reqId));
    endrule
    

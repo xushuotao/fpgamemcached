@@ -10,7 +10,8 @@ interface ScoreboardIfc#(numeric type numEntries);
    method Action doneKeyWrite(Bit#(TLog#(numEntries)) idx);
 endinterface
 
-module mkScoreboard(ScoreboardIfc#(numEntries));
+module mkScoreboard(ScoreboardIfc#(numEntries))
+   provisos(Add#(TExp#(TLog#(numEntries)),0, numEntries));
    Vector#(numEntries, Reg#(Bool)) valids <- replicateM(mkReg(False));
    Vector#(numEntries, Reg#(Bit#(32))) hashValues <- replicateM(mkRegU());
    Vector#(numEntries, Reg#(Bool)) pendingHdrWr <- replicateM(mkReg(False));

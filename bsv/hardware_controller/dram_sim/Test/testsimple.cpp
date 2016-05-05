@@ -5,6 +5,8 @@
 #include <assert.h>
 #include <time.h>
 
+#include <pthread.h>
+
 #include "SimpleIndicationWrapper.h"
 #include "SimpleRequestProxy.h"
 #include "GeneratedTypes.h"
@@ -18,12 +20,13 @@ class SimpleIndication : public SimpleIndicationWrapper
 public:
   uint32_t cnt;
   void incr_cnt(){
-    if (++cnt == 1)
-      exit(0);
+    cnt++;
+    //if (++cnt == 1)
+    //exit(0);
   }
   
-  virtual void readRes(const DDRLine& data){
-    fprintf(stderr, "GetLine: %016lx %016lx %016lx %016lx %016lx %016lx %016lx %016lx\n", data.v0, data.v1, data.v2, data.v3, data.v4, data.v5, data.v6, data.v7);
+  virtual void readRes(const DDRLine data){
+    fprintf(stderr, "GetLine[%d]: %016lx %016lx %016lx %016lx %016lx %016lx %016lx %016lx\n",cnt, data.v0, data.v1, data.v2, data.v3, data.v4, data.v5, data.v6, data.v7);
     incr_cnt();
   }
   SimpleIndication(unsigned int id) : SimpleIndicationWrapper(id), cnt(0){}
@@ -40,7 +43,7 @@ int main(int argc, const char **argv)
   if(pthread_create(&tid, NULL,  portalExec, NULL)){
     fprintf(stderr, "Main::error creating exec thread\n");
     exit(1);
-  }
+    }
   
   DDRLine data;
 
@@ -53,9 +56,10 @@ int main(int argc, const char **argv)
   data.v6 = 0x7;
   data.v7 = 0x8;
 
-  device->write(1, data, 4);
-
-  device->readReq(1, 64);
+  for ( uint64_t i = 0; i < 64; i++ ) {
+    device->write(i, data, 64);
+    device->readReq(i, 64);
+  }
 
 #ifdef FLAG
   srand(time(NULL));

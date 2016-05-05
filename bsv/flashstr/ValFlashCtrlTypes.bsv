@@ -36,6 +36,12 @@ typedef 128 WordSz;
 typedef Bit#(WordSz) WordT;
 typedef TDiv#(WordSz, 8) WordBytes;
 
+typedef struct{
+   Bool rnw;
+   FlashAddrType addr;
+   ValSizeT numBytes;
+   TagT reqId;
+   } FlashStoreCmd deriving (Bits, Eq);
 
 /*typedef struct{
    Bit#(32) nBytes;
@@ -85,12 +91,14 @@ typedef BlocksPerCE NumSegments;
 Integer segmentSz = valueOf(SegmentSz);*/
 interface FlashWriteServer;
    interface Server#(ValSizeT, FlashAddrType) writeServer;
-   interface Put#(Bit#(512)) writeWord;
+   interface Put#(Bit#(128)) writeWord;
+   //interface Get#(Bool) firewire;
 endinterface
 
 interface FlashWriteClient;
    interface Client#(ValSizeT, FlashAddrType) writeClient;
-   interface Get#(Bit#(512)) writeWord;
+   interface Get#(Bit#(128)) writeWord;
+   //interface Put#(Bool) firewire;
 endinterface
 
 
@@ -106,36 +114,34 @@ endinterface
 
 interface FlashValueStoreReadServer;
    interface Put#(FlashReadReqT) request;
-   interface Get#(Tuple2#(WordT, TagT)) dramResp;
-   interface Get#(Tuple2#(WordT, TagT)) flashResp;
-   interface Get#(Tuple2#(ValSizeT, TagT)) dramBurstSz;
-   interface Get#(Tuple2#(ValSizeT, TagT)) flashBurstSz;
+   interface Get#(Tuple2#(WordT, TagT)) response;
+   interface Get#(Tuple2#(ValSizeT, TagT)) burstSz;
+
+   // interface Get#(Tuple2#(WordT, TagT)) dramResp;
+   // interface Get#(Tuple2#(WordT, TagT)) flashResp;
+   // interface Get#(Tuple2#(ValSizeT, TagT)) dramBurstSz;
+   // interface Get#(Tuple2#(ValSizeT, TagT)) flashBurstSz;
 endinterface
 
 
 interface FlashValueStoreReadClient;
    interface Get#(FlashReadReqT) request;
-   interface Put#(Tuple2#(WordT, TagT)) dramResp;
-   interface Put#(Tuple2#(WordT, TagT)) flashResp;
-   interface Put#(Tuple2#(ValSizeT, TagT)) dramBurstSz;
-   interface Put#(Tuple2#(ValSizeT, TagT)) flashBurstSz;
+   interface Put#(Tuple2#(WordT, TagT)) response;
+   interface Put#(Tuple2#(ValSizeT, TagT)) burstSz;
+   
+   // interface Put#(Tuple2#(WordT, TagT)) dramResp;
+   // interface Put#(Tuple2#(WordT, TagT)) flashResp;
+   // interface Put#(Tuple2#(ValSizeT, TagT)) dramBurstSz;
+   // interface Put#(Tuple2#(ValSizeT, TagT)) flashBurstSz;
 endinterface
-
-/*
-interface FlashPins;
-   interface Aurora_Pins#(4) aurora_fmc1;
-   interface Aurora_Clock_Pins aurora_clk_fmc1;
-endinterface
-*/
 
 interface FlashValueStoreIfc;
    interface FlashWriteServer writeServer;
-   interface FlashValueStoreReadServer readServer;
-   interface DRAM_LOCK_Client dramClient;
+   interface FlashReadServer readServer;
+   interface DRAMClient dramClient;
    interface FlashRawWriteClient flashRawWrClient;
    interface FlashRawReadClient flashRawRdClient;
    interface TagClient tagClient;
-   //interface FlashPins flashPins;
 endinterface
 
 
@@ -144,6 +150,7 @@ instance Connectable#(FlashWriteClient, FlashWriteServer);
    module mkConnection#(FlashWriteClient cli, FlashWriteServer ser)(Empty);
       mkConnection(cli.writeClient, ser.writeServer);
       mkConnection(cli.writeWord, ser.writeWord);
+//      mkConnection(cli.firewire, ser.firewire);
    endmodule
 endinstance
 
@@ -151,6 +158,7 @@ instance Connectable#(FlashWriteServer, FlashWriteClient);
    module mkConnection#(FlashWriteServer ser, FlashWriteClient cli)(Empty);
       mkConnection(cli.writeClient, ser.writeServer);
       mkConnection(cli.writeWord, ser.writeWord);
+//      mkConnection(cli.firewire, ser.firewire);
    endmodule
 endinstance
 
@@ -158,20 +166,16 @@ endinstance
 instance Connectable#(FlashValueStoreReadClient, FlashValueStoreReadServer);
    module mkConnection#(FlashValueStoreReadClient cli, FlashValueStoreReadServer ser)(Empty);
       mkConnection(cli.request, ser.request);
-      mkConnection(cli.dramResp, ser.dramResp);
-      mkConnection(cli.flashResp, ser.flashResp);
-      mkConnection(cli.dramBurstSz, ser.dramBurstSz);
-      mkConnection(cli.flashBurstSz, ser.flashBurstSz);
+      mkConnection(cli.response, ser.response);
+      mkConnection(cli.burstSz, ser.burstSz);
    endmodule
 endinstance
 
 instance Connectable#(FlashValueStoreReadServer, FlashValueStoreReadClient);
    module mkConnection#(FlashValueStoreReadServer ser, FlashValueStoreReadClient cli)(Empty);
       mkConnection(cli.request, ser.request);
-      mkConnection(cli.dramResp, ser.dramResp);
-      mkConnection(cli.flashResp, ser.flashResp);
-      mkConnection(cli.dramBurstSz, ser.dramBurstSz);
-      mkConnection(cli.flashBurstSz, ser.flashBurstSz);
+      mkConnection(cli.response, ser.response);
+      mkConnection(cli.burstSz, ser.burstSz);
    endmodule
 endinstance
 

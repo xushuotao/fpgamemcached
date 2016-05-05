@@ -35,6 +35,7 @@ typedef struct{
     Bool initlock;
    Bool lock;
     Bool ignoreLock;
+   Bool ackReq;
    } DRAM_LOCK_Req deriving(Bits,Eq);
 
 

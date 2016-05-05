@@ -1,14 +1,12 @@
 #include <jni.h>
-#include "BluecacheClient.h"
-#include "testbluecache.h"
-#include <semaphore.h>
+#include "edu_mit_bluecache_BluecacheClient.h"
+#include "bluecachedaemon.h"
 
 //sem_t* mutex;
 int threadCnt = 0;
 
 
 JNIEXPORT jint JNICALL Java_BluecacheClient_initBluecache(JNIEnv *env, jobject obj){
-  
   if ( threadCnt == 0 )
     initBluecacheProxy();
   threadCnt++;
@@ -60,7 +58,7 @@ JNIEXPORT jbyteArray JNICALL Java_BluecacheClient_sendGet(JNIEnv *env, jobject o
   sendGet((unsigned char*)keybuf, keylen, threadId, &valbuf, &vallen);
   
   //delete(keybuf);
-  env->ReleaseByteArrayElements(key, keybuf, JNI_ABORT);
+  //env->ReleaseByteArrayElements(key, keybuf, JNI_ABORT);
   //fprintf(stderr, "Main:: sendGet responds, vallen = %d\n", vallen);
   if ( valbuf != NULL ) {
     jbyteArray array = env->NewByteArray(vallen);

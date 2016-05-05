@@ -60,7 +60,7 @@ typedef VDDR3_Controller_Xilinx#(`DDR3_VC707) VDDR3_Controller_Xilinx_VC707_1GB;
 ////////////////////////////////////////////////////////////////////////////////
 ////////////////////////////////////////////////////////////////////////////////
 import "BVI" ddr3_wrapper =
-module vMkVC707DDR3Controller#(DDR3_Configure cfg, Clock refclk)(VDDR3_Controller_Xilinx_VC707_1GB);
+module vMkVC707DDR3Controller#(DDR3_Configure_1G cfg, Clock refclk)(VDDR3_Controller_Xilinx_VC707_1GB);
    default_clock clk(sys_clk_i);
    default_reset rst(sys_rst);
    
@@ -132,7 +132,7 @@ endmodule
 
 
 
-module mkDDR3Controller_VC707_2_1#(DDR3_Configure cfg, Clock refclk)(DDR3_Controller_VC707_1GB);
+module mkDDR3Controller_VC707_2_1#(DDR3_Configure_1G cfg, Clock refclk)(DDR3_Controller_VC707_1GB);
    (* hide_all *)
    let _v <- vMkVC707DDR3Controller(cfg, refclk);
    let _m <- mkXilinxDDR3Controller_2_1_(_v, cfg);

@@ -758,7 +758,8 @@ int runtest(int argc, const char ** argv)
 
   device->initDMABufSz(DMABUF_SZ);
   //initMemcached(8193, 8194, 8195 , 1<<25, (1<<25)+(1<<14)+8193*2048, 1<<27, 1<<29);
-  initMemcached(128, 256, 1024, 1<<25, 1<<26, 1<<27, 1<<29);
+  //initMemcached(128, 256, 1024, 1<<25, 1<<26, 1<<27, 1<<29);
+  initMemcached(32, 256, 1024, 1<<25, 1<<27, 1<<27, 1<<29);
   //initMemcached(128, 256, 1024, 1<<15, 1<<17, 1<<27, 1<<29);
   //initMemcached(8193, 8194, 8195 , 1<<25, (1<<25)+(1<<14)+8193, 1<<27, 1<<29);
 
@@ -794,8 +795,10 @@ int runtest(int argc, const char ** argv)
     //vallen = 8192-8-keylen;
     //keylen = rand()%255+1;
     //vallen = rand()%255+1;
-    keylen = 64;
-    vallen = 64;
+    //keylen = 64;
+    //vallen = 64;
+    keylen = 8;
+    vallen = 8;
     keylenArray[i] = keylen;
     vallenArray[i] = vallen;
 
@@ -806,7 +809,7 @@ int runtest(int argc, const char ** argv)
 
     valArray[i] = new char[vallen];
     for (int j = 0; j < vallen; j++){
-      valArray[i][j] = j;//rand();
+      valArray[i][j] = rand();
     }
     sendSet(keyArray[i], valArray[i], keylen, vallen, i);
   }

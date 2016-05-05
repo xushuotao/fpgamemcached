@@ -11,6 +11,7 @@ import Vector::*;
 
 import TagAlloc::*;
 import RegFile::*;
+import LFSR :: * ;
 //import TagArbiter::*;
 
 // FlashCapacity is defined in GBs
@@ -46,6 +47,7 @@ Integer lgBlkOffset = valueOf(TLog#(BlocksPerCE));
 Integer lgWayOffset = valueOf(TLog#(ChipsPerBus));
               
 interface FlashRawWriteServer;
+   interface Server#(Bit#(32), Bool) reserve;
    interface Server#(FlashCmd, TagT) server;
    interface Put#(Tuple2#(Bit#(128), TagT)) wordPipe;
    interface Get#(Tuple2#(TagT, StatusT)) doneAck;
@@ -55,6 +57,7 @@ endinterface
 
 typedef Client#(FlashCmd, Tuple2#(Bit#(128), TagT)) FlashRawReadClient;
 interface FlashRawWriteClient;
+   interface Client#(Bit#(32), Bool) reserve;
    interface Client#(FlashCmd, TagT) client;
    interface Get#(Tuple2#(Bit#(128), TagT)) wordPipe;
    interface Put#(Tuple2#(TagT, StatusT)) doneAck;
@@ -94,7 +97,7 @@ module mkFlashServer#(FlashCtrlUser flash)(FlashServer);
    Vector#(NumChips, Reg#(Bit#(TLog#(BlocksPerCE)))) nextWritePtrs <- replicateM(mkReg(0));
    Vector#(NumChips, Reg#(Bit#(TLog#(BlocksPerCE)))) nextErasePtrs <- replicateM(mkReg(0));
    // Reg#(TagT) eraseCnt <- mkReg(0);
-   Vector#(2, FIFO#(Tuple2#(TagT,StatusT))) ackStatusQs <- replicateM(mkFIFO());   
+   Vector#(2, FIFO#(Tuple2#(TagT,StatusT))) ackStatusQs <- replicateM(mkSizedFIFO(128));   
    // for (Integer i = 0; i < valueOf(NumChips); i = i + 1) begin
    FIFO#(Bit#(32)) tagReqQ <- mkFIFO();
    FIFO#(TagT) freeTagQ <- mkFIFO();
@@ -105,8 +108,12 @@ module mkFlashServer#(FlashCtrlUser flash)(FlashServer);
    Reg#(Bit#(TAdd#(TLog#(NumChips),1))) respMax <- mkReg(0);
    
    Reg#(Bool) resetFlag <- mkReg(False);
+
+   FIFO#(Bool) eraseFinishQ <- mkFIFO();
+   Integer numChips = valueOf(NumChips);
    
    rule doEraseIdle if ( state == IDLE && resetFlag);
+      //if ( nextWritePtrs[numChips-1] + 1 > nextErasePtrs[numChips-1] ) begin
       if ( nextWritePtrs[0] + 1 > nextErasePtrs[0] ) begin
          state <= ERASECMD;
          tagReqQ.enq(fromInteger(valueOf(NumChips)));
@@ -130,7 +137,6 @@ module mkFlashServer#(FlashCtrlUser flash)(FlashServer);
          flash.sendCmd(FlashCmd{tag: tag, op: ERASE_BLOCK, bus: busid, chip: chipid, block: extend(nextPhysPtrs[chipCnt]), page: 0});
          lut.upd(tag, chipCnt);
          respMax <= respMax + 1;
-
       end
       
       chipCnt <= chipCnt + 1;
@@ -141,6 +147,8 @@ module mkFlashServer#(FlashCtrlUser flash)(FlashServer);
    
    Reg#(Bit#(TLog#(NumChips))) respCnt <- mkReg(0);
    Reg#(Bit#(TLog#(NumChips))) successCnt <- mkReg(0);
+   
+   let random <- mkLFSR_32;
       
    rule doEraseAck if ( state == ERASEACK );
       let v <- toGet(ackStatusQs[1]).get();
@@ -150,7 +158,15 @@ module mkFlashServer#(FlashCtrlUser flash)(FlashServer);
       nextPhysPtrs[chipId] <= nextPhysPtrs[chipId] + 1;
       returnTagQ.enq(tag);
       $display("eraseAck:: tag = %d, chipId = %d, status = %d, nextPhysPtrs = %d, nextErasePtrs = %d, respCnt = %d, successCnt = %d, respMax = %d", tag, chipId, status, nextPhysPtrs[chipId], nextErasePtrs[chipId], respCnt, successCnt, respMax);
+      Bool success = False;
+      `ifdef BSIM_Blah
+      random.next();
+      if ( random.value() % 8 != 7 ) begin
+         `else
       if ( status != ERASE_ERROR ) begin
+         `endif
+         $display("eraseAckSUCCESSFUL:: tag = %d, chipId = %d, status = %d, nextPhysPtrs = %d, nextErasePtrs = %d, respCnt = %d, successCnt = %d, respMax = %d", tag, chipId, status, nextPhysPtrs[chipId], nextErasePtrs[chipId], respCnt, successCnt, respMax);
+         success = True;
          eraseStatus[chipId] <= True;
          successCnt <= successCnt + 1;
          nextErasePtrs[chipId] <= nextErasePtrs[chipId] + 1;
@@ -166,10 +182,18 @@ module mkFlashServer#(FlashCtrlUser flash)(FlashServer);
       
       if ( extend(respCnt) + 1 == respMax ) begin
          respCnt <= 0;
-         if ( extend(successCnt) + 1 == respMax ) begin
+         if ( successCnt + 1 == 0 && success ) begin
+            $display("Going back to IDLE");
             state <= IDLE;
+            eraseFinishQ.enq(True);
          end
          else begin
+            $display("Going back to ERASECMD");
+            if (success)
+               tagReqQ.enq(fromInteger(valueOf(NumChips))-extend(successCnt)-1);
+            else
+               tagReqQ.enq(fromInteger(valueOf(NumChips))-extend(successCnt));               
+            respMax <= 0;
             state <= ERASECMD;
          end
       end
@@ -179,7 +203,31 @@ module mkFlashServer#(FlashCtrlUser flash)(FlashServer);
       
    endrule
 
-
+   FIFO#(Bit#(32)) reserveReqQ <- mkFIFO();
+   FIFO#(Bool) reserveRespQ <- mkFIFO();
+   
+   Reg#(Bit#(TLog#(PagesPerBlock))) pageCnt_chips <- mkReg(0);
+   Reg#(Bit#(32)) responseCnt <- mkReg(0);
+   rule doReserveReq;
+      let numPages = reserveReqQ.first();
+      let pagesPerChip = numPages/fromInteger(valueOf(NumChips));
+      if (  pageCnt_chips == 0 ) begin
+         eraseFinishQ.deq();
+         reserveReqQ.deq();
+         reserveRespQ.enq(True);
+         pageCnt_chips <= pageCnt_chips + truncate(pagesPerChip);
+         responseCnt <= responseCnt + 1;
+         $display("FlashServer response for write segId = %d", responseCnt);
+      end
+      else begin
+         reserveReqQ.deq();
+         reserveRespQ.enq(True);
+         pageCnt_chips <= pageCnt_chips + truncate(pagesPerChip);
+         responseCnt <= responseCnt + 1;
+         $display("FlashServer response for write segId = %d", responseCnt);
+      end
+   endrule
+   
    Vector#(NumChips, Reg#(Bit#(TLog#(PagesPerBlock)))) pageCnts <- replicateM(mkReg(0)); 
    rule doReq;
 
@@ -250,9 +298,10 @@ module mkFlashServer#(FlashCtrlUser flash)(FlashServer);
       else
          ackStatusQs[1].enq(v);
    endrule
-
+   
    
    interface FlashRawWriteServer writeServer;
+      interface Server reserve = toServer(reserveReqQ, reserveRespQ);
       interface Server server;
          interface Put request = toPut(cmdQ);
          interface Get response;
@@ -297,6 +346,9 @@ module mkFlashServer#(FlashCtrlUser flash)(FlashServer);
          nextWritePtrs[i] <= 0;
          nextErasePtrs[i] <= 0;
       end
+      `ifdef BSIM
+      random.seed(1);
+      `endif
       resetFlag <= True;
    endmethod
 
@@ -305,32 +357,40 @@ endmodule
 module mkFlashServer_dummy#(FlashCtrlUser flash)(FlashServer);
    
    FIFO#(FlashCmd) cmdQ <- mkSizedFIFO(128);
-   FIFOF#(Bool) dumpReqQ <- mkFIFOF;
-   FIFO#(Tuple2#(BlockT, Bool)) dumpRespQ <- mkFIFO();
    
+   FIFO#(Bit#(32)) reserveReqQ <- mkFIFO();
+   FIFO#(Bool) reserveRespQ <- mkFIFO();
    
+   Reg#(Bit#(TLog#(PagesPerBlock))) pageCnt_chips <- mkReg(0);
+   Reg#(Bit#(32)) responseCnt <- mkReg(0);
+   rule doReserveReq;
+      let numPages = reserveReqQ.first();
+      reserveRespQ.enq(True);
+   endrule
+
+      
    rule doCmd;
       let cmd <- toGet(cmdQ).get();
       flash.sendCmd(cmd);
    endrule
-   
-   Vector#(2, FIFO#(Tuple2#(TagT,StatusT))) ackStatusQs <- replicateM(mkFIFO);
+
+   Vector#(2, FIFO#(Tuple2#(TagT,StatusT))) ackStatusQs <- replicateM(mkSizedFIFO(128));      
    rule distributeAck;
       let v <- flash.ackStatus;
       let tag = tpl_1(v);
       let status = tpl_2(v);
       if ( status == WRITE_DONE )
          ackStatusQs[0].enq(v);
-      else
-         ackStatusQs[1].enq(v);
+      //else
+         //ackStatusQs[1].enq(v);
    endrule
 
-   // interface Server dumpMap;
-   //    interface Put request = toPut(dumpReqQ);
-   //    interface Get response = toGet(dumpRespQ);
-   // endinterface
+   FIFO#(Bit#(32)) tagReqQ <- mkFIFO();
+   FIFO#(TagT) freeTagQ <- mkFIFO();
+   FIFO#(TagT) returnTagQ <- mkFIFO();
    
    interface FlashRawWriteServer writeServer;
+      interface Server reserve = toServer(reserveReqQ, reserveRespQ);
       interface Server server;
          interface Put request = toPut(cmdQ);
          interface Get response;
@@ -360,10 +420,19 @@ module mkFlashServer_dummy#(FlashCtrlUser flash)(FlashServer);
       endinterface
    endinterface
    
-   // interface FlashRawEraseServer eraseServer;
-   //    interface Put request = toPut(cmdQ);
-   //    interface Get response = toGet(ackStatusQs[1]);
-   // endinterface
+   
+   interface TagClient tagClient;
+      interface Client reqTag;
+         interface Get request = toGet(tagReqQ);
+         interface Put response = toPut(freeTagQ);
+      endinterface
+      interface Get retTag = toGet(returnTagQ);
+   endinterface
+   
+   method Action reset(Bit#(32) randV);
+   endmethod
+
+   
    
 
 
@@ -371,6 +440,7 @@ endmodule
 
 instance Connectable#(FlashRawWriteClient, FlashRawWriteServer);
    module mkConnection#(FlashRawWriteClient cli, FlashRawWriteServer ser)(Empty);
+      mkConnection(cli.reserve, ser.reserve);
       mkConnection(cli.client, ser.server);
       mkConnection(cli.wordPipe, ser.wordPipe);
       mkConnection(cli.doneAck, ser.doneAck);
@@ -379,6 +449,7 @@ endinstance
 
 instance Connectable#(FlashRawWriteServer, FlashRawWriteClient);
    module mkConnection#(FlashRawWriteServer ser, FlashRawWriteClient cli)(Empty);
+      mkConnection(cli.reserve, ser.reserve);
       mkConnection(cli.client, ser.server);
       mkConnection(cli.wordPipe, ser.wordPipe);
       mkConnection(cli.doneAck, ser.doneAck);

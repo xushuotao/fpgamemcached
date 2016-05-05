@@ -28,10 +28,12 @@ import DDR3Sim::*;
 import DRAMController::*;
 import Connectable::*;
 import Time::*;
-import ValDRAMCtrl::*;
+
+import ValuestrCommon::*;
+import ValDRAMCtrl_128::*;
 
 interface SimpleIndication;
-   method Action getVal(Bit#(64) v);
+   method Action getVal(Bit#(64) v1, Bit#(64) v0);
 endinterface
 
 
@@ -52,8 +54,7 @@ module mkSimpleRequest#(SimpleIndication indication)(SimpleRequest);
    
    let dramController <- mkDRAMController();
    
-   //let ddr3_cli_200Mhz <- mkDDR3ClientSync(dramController.ddr3_cli, clockOf(dramController), resetOf(dramController), clockOf(ddr3_ctrl_user), resetOf(ddr3_ctrl_user));
-   
+      
    mkConnection(dramController.ddr3_cli, ddr3_ctrl_user);
    
    let clock <- mkLogicClock();
@@ -67,41 +68,22 @@ module mkSimpleRequest#(SimpleIndication indication)(SimpleRequest);
    FIFO#(Tuple2#(Bit#(64), Bit#(64))) wrRqQ <- mkFIFO;
    FIFO#(Bit#(64)) wrValQ <- mkSizedFIFO(64);
    
-   /*rule drRdRq;
-      let v = rdRqQ.first;
-      rdRqQ.deq;
-      valstr.readReq(tpl_1(v), tpl_2(v));
-   endrule
-  
-   rule drWrRq;
-      let v = wrRqQ.first;
-      wrRqQ.deq;
-      valstr.writeReq(tpl_1(v), tpl_2(v));
-   endrule
-   
-   rule drWrVal;
-      let v = wrValQ.first;
-      wrValQ.deq;
-      valstr.writeVal(v);
-   endrule*/
-   
    rule drRdResp;
       let v <- valstr.readVal();
       $display("%h, %d",v, v);
-      indication.getVal(v);
+      indication.getVal(truncateLSB(v), truncate(v));
    endrule
   
    Reg#(Bit#(29)) reqAddr <- mkReg(0);
    Reg#(Bit#(29)) resAddr <- mkReg(0);
    Reg#(Bit#(29)) maxAddr <- mkRegU();
    Reg#(Bool) dumpBool <- mkReg(False);
-   rule dump_req if (dumpBool && reqAddr < maxAddr);
+   
+   Reg#(Bit#(64)) readCache <- mkReg(0);
+   Reg#(Bool) even <- mkReg(True);
 
-      dramController.readReq(zeroExtend(reqAddr),64);
-      reqAddr <= reqAddr + 64;
-
-   endrule
-
+   FIFO#(Bit#(64)) nBytesQ <- mkFIFO();
+   Reg#(Bit#(64)) byteCnt <- mkReg(0);
    method Action readReq(Bit#(64) startAddr, Bit#(64) nBytes);
       //rdRqQ.enq(tuple2(startAddr, nBytes));
       valstr.readReq(startAddr, nBytes);
@@ -109,12 +91,35 @@ module mkSimpleRequest#(SimpleIndication indication)(SimpleRequest);
    
    method Action writeReq(Bit#(64) startAddr, Bit#(64) nBytes);
       //wrRqQ.enq(tuple2(startAddr, nBytes));
-      valstr.writeReq(startAddr, nBytes, ?, ?);
+      valstr.writeReq(ValstrWriteReqT{addr: startAddr, nBytes:truncate(nBytes), doEvict:False});
+      nBytesQ.enq(nBytes);
    endmethod
    
    method Action writeVal(Bit#(64) wrVal);
       //wrValQ.enq(wrVal);
-      valstr.writeVal(wrVal);
+      let byteMax = nBytesQ.first();
+      if (even) begin
+         readCache <= wrVal;
+         //$display("here0");
+         if ( byteCnt + 8 >= byteMax) begin
+            valstr.writeVal({0, wrVal});
+         end
+      end
+      else begin 
+         //$display("here1");
+         valstr.writeVal({wrVal,readCache});
+      end
+   
+      if ( byteCnt + 8 < byteMax)  begin
+         byteCnt <= byteCnt + 8;
+         even <= !even;
+         //$display("even <= !even[%d]",even);
+      end
+      else begin
+         even <= True;
+         byteCnt <= 0;
+         nBytesQ.deq();
+      end
    endmethod
 
 endmodule

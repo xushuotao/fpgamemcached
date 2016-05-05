@@ -10,6 +10,9 @@ import MemcachedTypes::*;
 //import ValuestrCommon::*;
 import ProtocolHeader::*;
 import ParameterTypes::*;
+import ControllerTypes::*;
+
+import ValFlashCtrlTypes::*;
 
 
 typedef struct{
@@ -56,19 +59,24 @@ typedef TDiv#(HeaderResidualSz,8) HeaderResidualBytes;
 
 typedef enum {SUCCESS, ERR_KEYEXIST, ERR_MISS} RespStatus deriving (Eq, Bits);
 
+
+
 typedef struct{
    Protocol_Binary_Response_Status status;
-   ValAddrT value_addr;
+   TagT reqId;
+   // ValAddrT value_addr;
    ValSizeT value_size;
-               
-   HashValueT hv;
-   WayIdxT idx;
    
-   Bool doEvict;
+   FlashStoreCmd value_cmd;
+               
+   // HashValueT hv;
+   // WayIdxT idx;
+   
+   // Bool doEvict;
   
-   HashValueT old_hv;
-   WayIdxT old_idx;
-   ValSizeT old_nBytes;
+   // HashValueT old_hv;
+   // WayIdxT old_idx;
+   // ValSizeT old_nBytes;
 
    } HashtableRespType deriving (Bits, Eq);
 
@@ -79,6 +87,7 @@ typedef struct{
    Bit#(8) key_size;
    ValSizeT value_size;
    Protocol_Binary_Command opcode;
+   TagT reqId;
    } HashtableReqT deriving(Bits, Eq);
 
 typedef struct{
@@ -88,6 +97,7 @@ typedef struct{
    ValSizeT value_size;
    Time_t time_now;
    Protocol_Binary_Command opcode;
+   TagT reqId;
    } HdrRdReqT deriving(Bits, Eq);
 
 
@@ -101,6 +111,7 @@ typedef struct{
    Bit#(NumWays) cmpMask;
    Bit#(NumWays) idleMask;
    Vector#(NumWays, ItemHeader) oldHeaders;
+   TagT reqId;
    } HdrWrReqT deriving(Bits, Eq);
 
 typedef struct{

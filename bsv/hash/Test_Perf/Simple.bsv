@@ -119,7 +119,8 @@ module mkSimpleRequest#(SimpleIndication indication)(SimpleRequest);
       else begin
          keyCnt <= keyCnt + 16;
       end
-      jenkins.putKey(128'hdeadbeefdeadbeefdeadbeefdeadbeef);
+      //jenkins.putKey(128'hdeadbeefdeadbeefdeadbeefdeadbeef);
+      jenkins.inPipe.put(128'hdeadbeefdeadbeefdeadbeefdeadbeef);
    endrule
                
       
@@ -143,7 +144,8 @@ module mkSimpleRequest#(SimpleIndication indication)(SimpleRequest);
          respCnt <= respCnt + 1;
       end
       
-      let v <- jenkins.getHash();
+      //let v <- jenkins.getHash();
+      let v <- jenkins.response.get();
    endrule
       
    

@@ -22,6 +22,7 @@
 #define ALLOC_SZ (1<<20)
 
 #define DMABUF_SZ (1<<13)
+//#define DMABUF_SZ (1<<7)
 
 
 #ifdef BSIM
@@ -80,7 +81,12 @@ int get_fails = 0;
 
 int resp_cnt = 0;
 int num_resps = 0;
+int eomCnt = 0;
+timespec * time_start;
+double avgLatency;
+int getResps = 0;
 
+int numTests;
 //timespec interval_start;
 //timespec start, now;
 
@@ -361,6 +367,12 @@ public:
 double timespec_diff_sec( timespec start, timespec end ) {
   double t = end.tv_sec - start.tv_sec;
   t += ((double)(end.tv_nsec - start.tv_nsec)/1000000000L);
+  return t;
+}
+
+double timespec_diff_usec( timespec start, timespec end ) {
+  double t = (end.tv_sec - start.tv_sec)*1e6;
+  t += ((double)(end.tv_nsec - start.tv_nsec)/1e3);
   return t;
 }
 
@@ -832,23 +844,32 @@ int runtest(int argc, const char ** argv)
   pthread_mutex_unlock(&mu_read);
 
 
-  int numTests, numGets;
+  //int numTests, numGets;
+  int numGets;
   // std::cout << "Enter number of Sets: ";
   // std::cin >> numTests;
   // std::cout << "Enter number of Gets: ";
   // std::cin >> numGets;
+  std::cout << "Enter number of Tests: ";
+  // numTests = 1000;
+  // numGets = 1000;
+  std::cin >> numTests;
+  numGets = numTests;
 
-  numTests = 1000;
-  numGets = 1000;
+  int threadcount;
+  std::cout << "Enter number of repetitions: ";
+  std::cin >> threadcount;
   //std:: cout << std::endl;
 
-  keyArray = new char*[numTests];
-  valArray = new char*[numTests];
+  keyArray = new char*[numTests*threadcount];
+  valArray = new char*[numTests*threadcount];
   
-  keylenArray = new int[numTests];
-  vallenArray = new int[numTests];
+  keylenArray = new int[numTests*threadcount];
+  vallenArray = new int[numTests*threadcount];
 
-  setStatus = new bool[numTests];
+  setStatus = new bool[numTests*threadcount];
+
+  time_start = new timespec[numTests*threadcount];
 
   int keylen;
   int vallen;
@@ -856,40 +877,53 @@ int runtest(int argc, const char ** argv)
   timespec start, now;
   
   clock_gettime(CLOCK_REALTIME, &start);
-  for ( int i = 0; i < numTests; i++ ){
-    //keylen = 64;//rand()%255 + 1;
-    //vallen = 8192-8-keylen;
-    keylen = rand()%255+1;
-    //vallen = 8192-8-keylen;
-    //vallen = (1.5*pageSz - keylen - 8) + 1;
-    vallen = rand()%(6*pageSz-keylen-8)+1;//rand()%255+1;
-    //vallen = (1000-keylen-8);
-    // keylen = 64;
-    // vallen = 64;
-    keylenArray[i] = keylen;
-    vallenArray[i] = vallen;
+  for ( int threadId = 0; threadId < threadcount; threadId++ ){
+    for ( int i = 0; i < numTests; i++ ){
+      keylen = 64;//rand()%255 + 1;
+      //vallen = 8192-8-keylen;
+      //keylen = rand()%255+1;
+      vallen = pageSz-8-keylen;
+      //vallen = (1.5*pageSz - keylen - 8) + 1;
+      //vallen = rand()%(6*pageSz-keylen-8)+1;//rand()%255+1;
+      //vallen = (1000-keylen-8);
+      // keylen = 64;
+      // vallen = 64;
+      int arrayIndex = threadId*numTests + i;
+      keylenArray[arrayIndex] = keylen;
+      vallenArray[arrayIndex] = vallen;
 
-    keyArray[i] = new char[keylen];
-    for ( int j = 0; j < keylen; j++ ){
-      keyArray[i][j] = rand();
-    }
+      keyArray[arrayIndex] = new char[keylen];
+      for ( int j = 0; j < keylen; j++ ){
+        keyArray[arrayIndex][j] = rand();
+      }
 
-    valArray[i] = new char[vallen];
-    for (int j = 0; j < vallen; j++){
-      valArray[i][j] = j;//rand();
+      valArray[arrayIndex] = new char[vallen];
+      for (int j = 0; j < vallen; j++){
+        valArray[arrayIndex][j] = rand();
+      }
+      sendSet(keyArray[arrayIndex], valArray[arrayIndex], keylen, vallen, arrayIndex);
     }
-    sendSet(keyArray[i], valArray[i], keylen, vallen, i);
+    flushDmaBuf();
+
+    //checkSetResp(numTests);
+    // pthread_mutex_lock(&mu_write);
+    // pthread_cond_wait(&cond_write, &mu_write);
+    // pthread_mutex_unlock(&mu_write);
   }
-  flushDmaBuf();
+  while ( true ){
+    pthread_mutex_lock(&mu_write);
+    //pthread_cond_wait(&cond_write, &mu_write);
+    if (eomCnt == threadcount ){
+      eomCnt = 0;
+      pthread_mutex_unlock(&mu_write);
+      break;
+    }
+    pthread_mutex_unlock(&mu_write);
+  }
 
-  //checkSetResp(numTests);
-  pthread_mutex_lock(&mu_write);
-  pthread_cond_wait(&cond_write, &mu_write);
-  pthread_mutex_unlock(&mu_write);
-                         
   clock_gettime(CLOCK_REALTIME, & now);
-  fprintf(stderr, "Main:: Set Test Successful, num_resps = %d\n", num_resps);
-  fprintf(stderr, "Main:: Set Test Successful, %f MRPS\n", (num_resps-1)/(timespec_diff_sec(start, now)*1000000));
+  fprintf(stderr, "Main:: Set Test Successful, num_resps = %d\n", numTests*threadcount);
+  fprintf(stderr, "Main:: Set Test Successful, %f MRPS\n", numTests*threadcount/(timespec_diff_sec(start, now)*1000000));
   sleep(1);
 
   // for ( int i = 0; i < numTests/2; i++){
@@ -901,27 +935,45 @@ int runtest(int argc, const char ** argv)
   
 
   clock_gettime(CLOCK_REALTIME, & start);
-  for ( int i = 0; i < numGets; i++ ){
-    //int i = (keylen-1)*32+j;
-    //keylen = 64;//rand()%256 + 1;
-    //int j = rand()%128;
-    //int j = rand()%numTests;
-    //int j = i%numTests; 
-    int j = i;
-    keylen = keylenArray[j];
-    sendGet(keyArray[j], keylen, j);
-  }
-  flushDmaBuf();
+  for ( int threadId = 0; threadId < threadcount; threadId++ ){
+    for ( int i = 0; i < numGets; i++ ){
+      //int i = (keylen-1)*32+j;
+      //keylen = 64;//rand()%256 + 1;
+      //int j = rand()%128;
+      //int j = rand()%numTests;
+      //int j = i%numTests;
+      int j = numTests*threadId + i;
+      keylen = keylenArray[j];
+      clock_gettime(CLOCK_REALTIME, time_start+j);      
+      sendGet(keyArray[j], keylen, j);
+    }
+    flushDmaBuf();
 
-  pthread_mutex_lock(&mu_write);
-  pthread_cond_wait(&cond_write, &mu_write);
-  pthread_mutex_unlock(&mu_write);
-  
+    // pthread_mutex_lock(&mu_write);
+    // pthread_cond_wait(&cond_write, &mu_write);
+    // pthread_mutex_unlock(&mu_write);
+  }
+  while ( true ){
+    pthread_mutex_lock(&mu_write);
+    //pthread_cond_wait(&cond_write, &mu_write);
+    if (eomCnt == threadcount ){
+      eomCnt = 0;
+      pthread_mutex_unlock(&mu_write);
+      break;
+    }
+    pthread_mutex_unlock(&mu_write);
+  }
+
+  // pthread_mutex_lock(&mu_write);
+  // pthread_cond_wait(&cond_write, &mu_write);
+  // pthread_mutex_unlock(&mu_write);
+
 
   //checkGetResp(numTests);
   clock_gettime(CLOCK_REALTIME, & now);
-  fprintf(stderr, "Main:: Get Test Successful, num_resps = %d\n", num_resps);
-  fprintf(stderr, "Main:: Get Test Successful, %f MRPS\n", (num_resps-1)/(timespec_diff_sec(start, now)*1000000));
+  fprintf(stderr, "Main:: Get Test Successful, num_resps = %d\n", numGets*threadcount);
+  fprintf(stderr, "Main:: Get Test Successful, %f MRPS\n", (numGets*threadcount)/(timespec_diff_sec(start, now)*1000000));
+  fprintf(stderr, "Main:: Get Test Successful, avgLatency = %lf, over %d Gets\n", avgLatency, getResps);
 
 
   fprintf(stderr, "Main:: All tests finished, set fails = %d, get fails = %d\n", set_fails, get_fails);
@@ -934,7 +986,9 @@ int runtest(int argc, const char ** argv)
 }
 
 void *decode_response(void *ptr){
+
   protocol_binary_response_header resphdr;
+  timespec now;
   while (true){
     dmaBufMemreadBuf(&resphdr, sizeof(protocol_binary_response_header));
     resp_cnt++;
@@ -982,6 +1036,10 @@ void *decode_response(void *ptr){
         fprintf(stderr,"Main:: Get %d fails\n", resphdr.response.opaque);
         get_fails++;
       }
+      clock_gettime(CLOCK_REALTIME, &now);
+      double diff = timespec_diff_usec(time_start[resphdr.response.opaque], now);
+      avgLatency = avgLatency*(double)getResps/(double)(getResps+1) + diff/(double)(getResps+1);
+      getResps++;
     } else if (resphdr.response.opcode == PROTOCOL_BINARY_CMD_EOM ){
       //dmaBufMemreadBuf(&resphdr, sizeof(protocol_binary_response_header));
       //printhdr(resphdr);
@@ -992,7 +1050,14 @@ void *decode_response(void *ptr){
       pthread_mutex_lock(&mu_write);
       num_resps = resp_cnt;
       resp_cnt = 0;
-      pthread_cond_signal(&cond_write);
+      // if ( eomCnt + 1 == numTests ){
+      //   pthread_cond_signal(&cond_write);
+      //   eomCnt = 0;
+      // }else{
+      //   eomCnt++;
+      // }
+      //      fprintf(stderr, "EOM received eomCnt = %d\n", eomCnt);
+      eomCnt++;
       pthread_mutex_unlock(&mu_write);
     } else if (resphdr.response.opcode == PROTOCOL_BINARY_CMD_DELETE ) {
       assert(resphdr.response.magic == PROTOCOL_BINARY_RES );

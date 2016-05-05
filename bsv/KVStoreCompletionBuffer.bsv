@@ -6,12 +6,13 @@ import ProtocolHeader::*;
 interface KVStoreCompletionBuffer;
    interface Put#(Tuple3#(Bit#(8), Bit#(32), TagT)) writeRequest;
    interface Put#(Bit#(128)) inPipe;
-   interface Put#(TagT) readRequest;
+   interface Put#(Tuple2#(TagT, Bool)) readRequest;
    interface Get#(Tuple2#(Bit#(8), Bit#(32))) readResponse;
    interface Get#(Bit#(128)) outPipe;
    //interface Get#(TagT) tagAck;
 endinterface
 
+(*synthesize*)
 module mkKVStoreCompletionBuffer(KVStoreCompletionBuffer);
    
    BRAM_Configure cfg = defaultValue;
@@ -28,16 +29,20 @@ module mkKVStoreCompletionBuffer(KVStoreCompletionBuffer);
       let opaque = tpl_2(v);
       let tag = tpl_3(v);
       
-      let keyToken <- toGet(inQ).get();
+
       $display("%m, keyCnt_wr = %d, keylen = %d, tag = %d", keyCnt_Wr, keylen, tag);
       statusLUT.portA.request.put(BRAMRequest{write: True,
                                               responseOnWrite: False,
                                               address:tag,
                                               datain: tuple2(truncate(keylen), opaque)});
-      keyBuf.portA.request.put(BRAMRequest{write: True,
-                                           responseOnWrite: False,
-                                           address:(extend(tag)<<4) + extend(keyCnt_Wr>>4),
-                                           datain: keyToken});
+      Bit#(128) keyToken = ?;
+      if ( keylen > 0 ) begin
+         keyToken <- toGet(inQ).get();
+         keyBuf.portA.request.put(BRAMRequest{write: True,
+                                              responseOnWrite: False,
+                                              address:(extend(tag)<<4) + extend(keyCnt_Wr>>4),
+                                              datain: keyToken});
+      end
       
       if ( extend(keyCnt_Wr) + 16 < keylen ) begin
          keyCnt_Wr <= keyCnt_Wr + 16;
@@ -48,7 +53,7 @@ module mkKVStoreCompletionBuffer(KVStoreCompletionBuffer);
       end
    endrule
    
-   FIFO#(TagT) rdReqQ <- mkFIFO();
+   FIFO#(Tuple2#(TagT,Bool)) rdReqQ <- mkFIFO();
    FIFO#(Bit#(8)) keylenQ <- mkFIFO();
    FIFO#(Tuple2#(Bit#(8), Bit#(32))) readResponseQ <- mkFIFO;
    //FIFO#(TagT) tagAckQ <- mkFIFO();
@@ -62,15 +67,19 @@ module mkKVStoreCompletionBuffer(KVStoreCompletionBuffer);
    endrule
       
    rule doRdReq;
-      let tag = rdReqQ.first();
-      Bit#(9) keylen = extend(keylenQ.first());
-      
-      keyBuf.portB.request.put(BRAMRequest{write: False,
-                                           responseOnWrite: False,
-                                           address:(extend(tag)<<4) + extend(keyCnt_Rd>>4),
-                                           datain: ?});
 
-      if ( extend(keyCnt_Rd) + 16 < keylen ) begin
+      let v = rdReqQ.first();
+      let tag = tpl_1(v);
+      let bypass = tpl_2(v);
+      Bit#(9) keylen = extend(keylenQ.first());
+      $display("%m: completion buffer got read req tag = %d, keyCnt_Rd = %d, keylen = %d, bypass = %d", tag, keyCnt_Rd, keylen, bypass);
+      if ( keylen > 0 && (!bypass) )
+         keyBuf.portB.request.put(BRAMRequest{write: False,
+                                              responseOnWrite: False,
+                                              address:(extend(tag)<<4) + extend(keyCnt_Rd>>4),
+                                              datain: ?});
+
+      if ( extend(keyCnt_Rd) + 16 < keylen && (!bypass)) begin
          keyCnt_Rd <= keyCnt_Rd + 16;
       end
       else begin
@@ -86,12 +95,13 @@ module mkKVStoreCompletionBuffer(KVStoreCompletionBuffer);
    interface Put inPipe = toPut(inQ);
    
    interface Put readRequest;
-      method Action put (TagT v);
-         $display("%m: completion buffer got read req tag = %d", v);
+      method Action put (Tuple2#(TagT, Bool) v);
+         let tag = tpl_1(v);
+         $display("%m: completion buffer got read req tag = %d, bypass = %d", tag, tpl_2(v));
          rdReqQ.enq(v);
          statusLUT.portB.request.put(BRAMRequest{write: False,
                                                  responseOnWrite: False,
-                                                 address: v,
+                                                 address: tag,
                                                  datain: ?});
 
        endmethod

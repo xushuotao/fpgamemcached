@@ -17,8 +17,9 @@ import HashtableArbiter::*;
 import HeaderReader::*;
 import HeaderWriter::*;
 
+import ValFlashCtrlTypes::*;
+
 interface HashtableInitIfc;
-   method Action initTable(Bit#(64) lgOffset);
    method ActionValue#(Bool) initialized;
 endinterface
 
@@ -26,8 +27,7 @@ interface HashtableIfc;
    interface Server#(HashtableReqT, HashtableRespType) server;
    interface HashtableInitIfc init;
    interface DRAMClient dramClient;
-   interface Put#(HeaderUpdateReqT) hdrUpdateRequest;
-   interface ValAllocClient valAllocClient;   
+   interface Client#(FlashStoreCmd, FlashAddrType) flashClient;
 endinterface
 
 
@@ -36,29 +36,39 @@ module mkAssocHashtb(HashtableIfc);
    let clk <- mkLogicClock();
    
    let hdrRd <- mkHeaderReader();
-   let hdrWr <- mkHeaderWriter(hdrRd.sFifoPort);
+   let hdrWr <- mkHeaderWriter();
    let htArbiter <- mkHashtableArbiter();
 
    mkConnection(hdrRd.dramClient, htArbiter.hdrRdServer);
    mkConnection(hdrWr.dramClient, htArbiter.hdrWrServer);
    mkConnection(hdrRd.response, hdrWr.request);
    mkConnection(hdrRd.wrAck, htArbiter.wrAck);   
-   mkConnection(hdrWr.hdrUpdDRAMClient, htArbiter.hdrUpdDramServer);
-   
+      
    DRAMArbiterIfc#(2) dramSwitch <- mkDRAMArbiter;
    mkConnection(htArbiter.dramClient, dramSwitch.dramServers[0]);
    
    Reg#(PhyAddr) addr <- mkReg(0);
    FIFO#(PhyAddr) addrMaxQ <- mkFIFO;
+   
+   
+   
+   `ifdef BSIM
+   Integer dramSz = valueOf(TExp#(25));
+   `else
+   Integer dramSz = valueOf(TExp#(30));
+   `endif
+   Integer writeBufSz = valueOf(TMul#(2,TExp#(20)));
+   Integer htableSz = (dramSz - writeBufSz);
+   Integer hvMax = htableSz/64;
+   //FIFO#(Bool) initializedQ <- mkFIFO();
+   
+   `ifndef BSIM
    Reg#(Bool) initialized <- mkReg(False);
-   FIFO#(Bool) initializedQ <- mkFIFO();
-   rule doinit;
-      let addrMax = addrMaxQ.first();
-      if ( addr + 64 >= addrMax ) begin
+   rule doinit if (!initialized);
+      //let addrMax = addrMaxQ.first();
+      if ( addr + 64 >= fromInteger(htableSz) ) begin
          addr <= 0;
-         addrMaxQ.deq;
          initialized <= True;
-         initializedQ.enq(True);
       end
       else begin
          addr <= addr + 64;
@@ -69,21 +79,24 @@ module mkAssocHashtb(HashtableIfc);
                                                     data: 0,
                                                     numBytes: 64});
    endrule
+   `else
+   Reg#(Bool) initialized <- mkReg(True);
+   `endif
      
-   Reg#(HashValueT) hvMax <- mkRegU();
+   //Reg#(HashValueT) hvMax <- mkRegU();
         
    Reg#(Bit#(32)) hvCnt <- mkReg(0);
    
    interface Server server;
       interface Put request;
          method Action put(HashtableReqT v) if (initialized);
-            hdrRd.request.put(HdrRdReqT{hv: v.hv & hvMax,
+            hdrRd.request.put(HdrRdReqT{hv: v.hv % fromInteger(hvMax),
                                         hvKey: v.hvKey,
                                         key_size: v.key_size,
                                         value_size: v.value_size,
                                         time_now: clk.get_time(),
-                                        //rnw: v.rnw
-                                        opcode: v.opcode
+                                        opcode: v.opcode,
+                                        reqId: v.reqId
                                         });
          endmethod
       endinterface
@@ -91,28 +104,17 @@ module mkAssocHashtb(HashtableIfc);
    endinterface
 
    interface HashtableInitIfc init;
-      method Action initTable(Bit#(64) lgOffset);
-         //hvMax <= unpack((1 << lgOffset) - 1) / fromInteger(valueOf(ItemOffset));
-         hvMax <= (1 << lgOffset) - 1;
-         PhyAddr maxAddr = (1 << lgOffset) << 6;
-         //`ifndef BSIM
-         addrMaxQ.enq(maxAddr);
-         initialized <= False;
-         // `else
-         // initialized <= True;
-         // `endif
-      endmethod
    
-      method ActionValue#(Bool) initialized;
-         let v = initializedQ.first();
-         initializedQ.deq();
-         return v;
+      method ActionValue#(Bool) initialized if (initialized);
+         `ifdef BSIM
+         hdrWr.reset();
+         `endif
+         return True;
       endmethod
    endinterface
    
    interface DRAMClient dramClient = dramSwitch.dramClient;
-   interface Put hdrUpdateRequest = hdrWr.hdrUpdateRequest;
-   interface ValAllocClient valAllocClient = hdrWr.valAllocClient;
+   interface Client flashClient = hdrWr.flashClient;   
 endmodule
 
 endpackage: Hashtable

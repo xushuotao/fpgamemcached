@@ -31,16 +31,19 @@ pthread_cond_t cond;
 class SimpleIndication : public SimpleIndicationWrapper
 {  
 public:
-  virtual void getVal(uint64_t a){
+  virtual void getVal(uint64_t v1, uint64_t v0){
     //pthread_mutex_lock(&mu);
-    rdArray[burstCnt++] = a;
+    rdArray[burstCnt++] = v0;
     //pthread_mutex_unlock(&mu);
+    if ( burstCnt + 1 <= burstLimit ){
+      rdArray[burstCnt++] = v1;
+    }
     if (burstCnt == burstLimit){
-      gettimeofday(&t2, NULL);
+      /*gettimeofday(&t2, NULL);
       elapsedTime = (t2.tv_sec - t1.tv_sec) * 1000.0;      // sec to ms
       elapsedTime += (t2.tv_usec - t1.tv_usec) / 1000.0;   // us to ms
       printf("Main:: Done executing read in %lf millisecs\n", elapsedTime );
-      //exit(0);
+      //exit(0);*/
       burstCnt = 0;
       pthread_cond_broadcast(&cond);
     //incr_cnt();
@@ -94,12 +97,12 @@ int main(int argc, const char **argv)
         device->writeVal(data);
         wrArray[i] = data;
       }
-      gettimeofday(&t2, NULL);
+      /*gettimeofday(&t2, NULL);
       elapsedTime = (t2.tv_sec - t1.tv_sec) * 1000.0;      // sec to ms
       elapsedTime += (t2.tv_usec - t1.tv_usec) / 1000.0;   // us to ms
       printf("Main:: Done executing write in %lf millisecs\n", elapsedTime );
   
-      gettimeofday(&t1, NULL);
+      gettimeofday(&t1, NULL);*/
       device->readReq(addr,numBytes);
 
       pthread_cond_wait(&cond,&mu);

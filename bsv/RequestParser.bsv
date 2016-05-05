@@ -24,7 +24,7 @@ typedef TDiv#(ReqHeaderSz, 8) ReqHeaderBytes;
 
 typedef enum{DoHeader, DoKeyValueTokens} State deriving (Bits, Eq);
 
-//(*synthesize*)
+(*synthesize*)
 module mkMemReqParser(MemReqParser);
    //FIFO#(Bit#(32)) reqMaxQ <- mkFIFO;
    

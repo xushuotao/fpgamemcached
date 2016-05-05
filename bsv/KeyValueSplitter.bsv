@@ -16,7 +16,7 @@ interface KeyValueSplitter;
    interface Get#(Bit#(128)) outPipe;
 endinterface
 
-//(*synthesize*)
+(*synthesize*)
 module mkKeyValueSplitter(KeyValueSplitter);
    FIFO#(Tuple2#(Bit#(8), Bit#(32))) reqQ <- mkSizedFIFO(numStages);
    FIFO#(Bool) respQ <- mkSizedFIFO(numStages);

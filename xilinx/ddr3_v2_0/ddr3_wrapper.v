@@ -83,26 +83,26 @@ module debug_ddr
    end
    
 
-   ila_ddr u_ila_ddr
-     (
-      .clk	(ui_clk),
-      .probe0	(app_addr_reg),
-      .probe1	(app_cmd_reg),
-      .probe2	(app_en_reg),
-      .probe3	(app_wdf_data_reg),
-      .probe4	(app_wdf_end_reg),
-      .probe5	(app_wdf_mask_reg),
-      .probe6	(app_wdf_wren_reg),
-      .probe7	(app_rd_data_reg),
-      .probe8	(app_rd_data_end_reg),
-      .probe9	(app_rd_data_valid_reg),
-      .probe10	(app_rdy_reg),
-      .probe11	(app_wdf_rdy_reg),
-      .probe12	(ui_clk_sync_rst_reg),
-      .probe13	(init_calib_complete_reg),
-      .probe14	(sys_rst_reg),
-      .probe15 	(0)
-      );
+   // ila_ddr u_ila_ddr
+   //   (
+   //    .clk	(ui_clk),
+   //    .probe0	(app_addr_reg),
+   //    .probe1	(app_cmd_reg),
+   //    .probe2	(app_en_reg),
+   //    .probe3	(app_wdf_data_reg),
+   //    .probe4	(app_wdf_end_reg),
+   //    .probe5	(app_wdf_mask_reg),
+   //    .probe6	(app_wdf_wren_reg),
+   //    .probe7	(app_rd_data_reg),
+   //    .probe8	(app_rd_data_end_reg),
+   //    .probe9	(app_rd_data_valid_reg),
+   //    .probe10	(app_rdy_reg),
+   //    .probe11	(app_wdf_rdy_reg),
+   //    .probe12	(ui_clk_sync_rst_reg),
+   //    .probe13	(init_calib_complete_reg),
+   //    .probe14	(sys_rst_reg),
+   //    .probe15 	(0)
+   //    );
    
 endmodule // debug_ddr
 
@@ -155,25 +155,26 @@ module ddr3_wrapper #
     input          sys_rst//
     );
 
-   debug_ddr _debug_ddr
-     (
-      .ui_clk			(ui_clk),
-      .app_addr			(app_addr),
-      .app_cmd			(app_cmd),
-      .app_en			(app_en),
-      .app_wdf_data		(app_wdf_data),
-      .app_wdf_end		(app_wdf_end),
-      .app_wdf_mask		(app_wdf_mask),
-      .app_wdf_wren		(app_wdf_wren),
-      .app_rd_data		(app_rd_data),
-      .app_rd_data_end		(app_rd_data_end),
-      .app_rd_data_valid	(app_rd_data_valid),
-      .app_rdy			(app_rdy),
-      .app_wdf_rdy 		(app_wdf_rdy),
-      .ui_clk_sync_rst		(ui_clk_sync_rst),
-      .init_calib_complete	(init_calib_complete),
-      .sys_rst			(sys_rst)
-      );
+
+   // debug_ddr _debug_ddr
+   //   (
+   //    .ui_clk			(ui_clk),
+   //    .app_addr			(app_addr),
+   //    .app_cmd			(app_cmd),
+   //    .app_en			(app_en),
+   //    .app_wdf_data		(app_wdf_data),
+   //    .app_wdf_end		(app_wdf_end),
+   //    .app_wdf_mask		(app_wdf_mask),
+   //    .app_wdf_wren		(app_wdf_wren),
+   //    .app_rd_data		(app_rd_data),
+   //    .app_rd_data_end		(app_rd_data_end),
+   //    .app_rd_data_valid	(app_rd_data_valid),
+   //    .app_rdy			(app_rdy),
+   //    .app_wdf_rdy 		(app_wdf_rdy),
+   //    .ui_clk_sync_rst		(ui_clk_sync_rst),
+   //    .init_calib_complete	(init_calib_complete),
+   //    .sys_rst			(sys_rst)
+   //    );
    
    ddr3_v2_0 u_ddr3_v2_0
      (

@@ -48,6 +48,7 @@ module mkValDRAMArbiter(ValDRAMArbiterIfc);
    
    FIFO#(Bool) ackQ <- mkSizedFIFO(32);
    
+   Reg#(Bit#(32)) reqCnt <- mkReg(0);
    
    for (Integer i = 0; i < valueOf(2); i = i + 1) begin
       rule doReqs_0 if (reqs[i].notEmpty);
@@ -63,8 +64,11 @@ module mkValDRAMArbiter(ValDRAMArbiterIfc);
          end
          
          if ( i == 0 ) begin
-            if (!req.rnw && req.ack)
+            if (!req.rnw && req.ack) begin
+               $display("Value store header updated reqCnt = %d", reqCnt);
+               reqCnt <= reqCnt + 1;
                ackQ.enq(True);
+            end
          end
       endrule
       

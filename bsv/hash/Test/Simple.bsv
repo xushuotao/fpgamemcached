@@ -89,11 +89,11 @@ typedef struct {
 */
 
 module mkSimpleRequest#(SimpleIndication indication)(SimpleRequest);
-   let jenkins <- mkJenkinsHash_128();
+   let jenkins <- mkJenkinsHash_128;//(32'hdeadbeef);
    DeserializerIfc#(64, 128, Bit#(0)) des <- mkDeserializer;
    
    rule process;
-      let retval <- jenkins.getHash();
+      let retval <- jenkins.response.get();
       indication.getHash(retval);
    endrule
    Reg#(Bit#(32)) cntQ <- mkReg(0);
@@ -118,7 +118,7 @@ module mkSimpleRequest#(SimpleIndication indication)(SimpleRequest);
    
    rule doJenkins;
       let v <- des.getVal();
-      jenkins.putKey(tpl_1(v));
+      jenkins.inPipe.put(tpl_1(v));
    endrule
                
       

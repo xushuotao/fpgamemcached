@@ -12,14 +12,13 @@ interface HashtableArbiter;
    interface DRAMServer hdrRdServer;
    interface Put#(DRAMReq) hdrWrServer;
    interface Get#(Bool) wrAck;
-   interface Server#(DRAMReq, Bool) hdrUpdDramServer;
    
    interface DRAMClient dramClient;
 endinterface
 
 (*synthesize*)
 module mkHashtableArbiter(HashtableArbiter);
-   Vector#(3, FIFOF#(DRAMReq)) dramReqQs <- replicateM(mkFIFOF);
+   Vector#(2, FIFOF#(DRAMReq)) dramReqQs <- replicateM(mkFIFOF);
    
    FIFO#(DRAMReq) dramCmdQ <- mkSizedFIFO(32);
    FIFO#(Bit#(512)) dramRespQ <- mkFIFO;
@@ -27,9 +26,9 @@ module mkHashtableArbiter(HashtableArbiter);
    FIFO#(Bool) wrAckQ <- mkBypassFIFO;
    FIFO#(Bool) hdrUpdAckQ <- mkBypassFIFO;
    
-   Arbiter_IFC#(3) arb <- mkArbiter(False);
+   Arbiter_IFC#(2) arb <- mkArbiter(False);
    
-   for (Integer i = 0; i < 3; i = i + 1) begin
+   for (Integer i = 0; i < 2; i = i + 1) begin
       rule doArbReq if ( dramReqQs[i].notEmpty);
          arb.clients[i].request();
       endrule
@@ -50,10 +49,6 @@ module mkHashtableArbiter(HashtableArbiter);
          else begin
             dramCmdQ.enq(req);
          end
-         
-         if ( i == 2 ) begin
-            hdrUpdAckQ.enq(True);
-         end
       endrule
    end
    
@@ -66,11 +61,7 @@ module mkHashtableArbiter(HashtableArbiter);
    endinterface
    interface Put hdrWrServer = toPut(dramReqQs[1]);
    interface Get wrAck = toGet(wrAckQ);
-   interface Server hdrUpdDramServer;
-      interface Put request = toPut(dramReqQs[2]);
-      interface Get response = toGet(hdrUpdAckQ);
-   endinterface
-      
+
    interface DRAMClient dramClient = toClient(dramCmdQ, dramRespQ);
    
 endmodule

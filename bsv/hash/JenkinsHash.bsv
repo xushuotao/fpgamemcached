@@ -126,6 +126,89 @@ interface MixStageIfc;
    interface Get#(MixStageType) response;
 endinterface
 
+// module mkMixStage#(Integer stage_id)(MixStageIfc);
+//    Reg#(Bit#(32)) reg_a <- mkReg(0);
+//    Reg#(Bit#(32)) reg_b <- mkReg(0);
+//    Reg#(Bit#(32)) reg_c <- mkReg(0);
+   
+//    Integer myStage = stage_id;
+   
+//    //FIFO#(MixStageType) inputFifo <- mkBypassFIFO;
+//    FIFO#(MixStageType) immediateFifo <- mkFIFO;
+//    FIFO#(MixStageType) outputFifo <- mkFIFO;
+   
+//    rule mix_phase_1;
+//       let args <- toGet(immediateFifo).get();
+//       if (!args.toFinal) begin
+//          if (args.stageId == fromInteger(myStage)) begin
+//             let a = args.a;
+//             let b = args.b;
+//             let c = args.c;
+            
+//             a = a-c;  a = a^rot(c,16);  c = c+b;
+//             b = b-a;  b = b^rot(a,19);  a = a+c;
+//             c = c-b;  c = c^rot(b, 4);  b = b+a;
+         
+         
+//             args.a = a;
+//             args.b = b;
+//             args.c = c;
+            
+//             reg_a <= args.a;
+//             reg_b <= args.b;
+//             reg_c <= args.c;
+//          end
+//       end
+
+//       if (args.stageId == fromInteger(myStage+1)) begin
+//          args.a = reg_a;
+//          args.b = reg_b;
+//          args.c = reg_c;
+//       end
+      
+//       outputFifo.enq(args);
+//    endrule
+
+//    interface Put request;// = toPut(inputFifo);
+//       method Action put(MixStageType args);
+//           if ( args.stageId == fromInteger(myStage)) begin
+//              if ( !args.toFinal ) begin
+//                 if (debug) $display("\x1b[32mHardware:: Mix_phase[%d], a = %h, b = %h, k[2] = %h\x1b[0m", myStage, args.a, args.b, args.c);
+//                 if (debug) $display("\x1b[32mHardware:: Mix_phase[%d], k[0] = %h, k[1] = %h, k[2] = %h\x1b[0m", myStage, args.k0, args.k1, args.k2);
+           
+//                 let a = args.a + args.k0;
+//                 let b = args.b + args.k1;
+//                 let c = args.c + args.k2;
+               
+                
+//                 a = a-c;  a = a^rot(c, 4);  c = c+b;
+//                 b = b-a;  b = b^rot(a, 6);  a = a+c; 
+//                 c = c-b;  c = c^rot(b, 8);  b = b+a;
+                
+//                 args.a = a;
+//                 args.b = b;
+//                 args.c = c;
+//                 /*if (debug) $display("\x1b[32mHardware:: Mix_phase[%d], a = %h, b = %h, k[2] = %h\x1b[0m", myStage, args.a, args.b, args.c);
+//                 if (debug) $display("\x1b[32mHardware:: Mix_phase[%d], k[0] = %h, k[1] = %h, k[2] = %h\x1b[0m", myStage, args.k0, args.k1, args.k2);*/
+//              end
+//              else begin
+//                 let c = args.c + args.k2;
+//                 let b = args.b + args.k1;
+//                 let a = args.a + args.k0;
+//                 args.a = a;
+//                 args.b = b;
+//                 args.c = c;
+//                 if (debug) $display("\x1b[32mHardware:: Final_mix[%d], a = %h, b = %h, c = %h\x1b[0m", myStage, a, b, c);      
+//                 if (debug) $display("\x1b[32mHardware:: Final_mix[%d], k[0] = %h, k[1] = %h, k[2] = %h\x1b[0m", myStage, args.k0, args.k1, args.k2);
+
+//              end
+//           end
+//          immediateFifo.enq(args);
+//       endmethod
+//    endinterface
+//    interface Get response = toGet(outputFifo);
+// endmodule
+
 module mkMixStage#(Integer stage_id)(MixStageIfc);
    Reg#(Bit#(32)) reg_a <- mkReg(0);
    Reg#(Bit#(32)) reg_b <- mkReg(0);
@@ -133,23 +216,53 @@ module mkMixStage#(Integer stage_id)(MixStageIfc);
    
    Integer myStage = stage_id;
    
-   //FIFO#(MixStageType) inputFifo <- mkBypassFIFO;
-   FIFO#(MixStageType) immediateFifo <- mkFIFO;
+   Vector#(2,FIFO#(MixStageType)) immediateFifos <- replicateM(mkFIFO);
    FIFO#(MixStageType) outputFifo <- mkFIFO;
    
    rule mix_phase_1;
-      let args <- toGet(immediateFifo).get();
+      let args <- toGet(immediateFifos[0]).get();
       if (!args.toFinal) begin
          if (args.stageId == fromInteger(myStage)) begin
             let a = args.a;
             let b = args.b;
             let c = args.c;
             
+            c = c-b;  c = c^rot(b, 8);  b = b+a;
             a = a-c;  a = a^rot(c,16);  c = c+b;
+            
+         
+            args.a = a;
+            args.b = b;
+            args.c = c;
+            
+            reg_a <= args.a;
+            reg_b <= args.b;
+            reg_c <= args.c;
+         end
+      end
+
+      // if (args.stageId == fromInteger(myStage+1)) begin
+      //    args.a = reg_a;
+      //    args.b = reg_b;
+      //    args.c = reg_c;
+      // end
+      
+      //outputFifo.enq(args);
+      immediateFifos[1].enq(args);
+   endrule
+   
+   
+   rule mix_phase_2;
+      let args <- toGet(immediateFifos[1]).get();
+      if (!args.toFinal) begin
+         if (args.stageId == fromInteger(myStage)) begin
+            let a = args.a;
+            let b = args.b;
+            let c = args.c;
+            
             b = b-a;  b = b^rot(a,19);  a = a+c;
             c = c-b;  c = c^rot(b, 4);  b = b+a;
-         
-         
+            
             args.a = a;
             args.b = b;
             args.c = c;
@@ -168,6 +281,7 @@ module mkMixStage#(Integer stage_id)(MixStageIfc);
       
       outputFifo.enq(args);
    endrule
+         
 
    interface Put request;// = toPut(inputFifo);
       method Action put(MixStageType args);
@@ -183,7 +297,6 @@ module mkMixStage#(Integer stage_id)(MixStageIfc);
                 
                 a = a-c;  a = a^rot(c, 4);  c = c+b;
                 b = b-a;  b = b^rot(a, 6);  a = a+c; 
-                c = c-b;  c = c^rot(b, 8);  b = b+a;
                 
                 args.a = a;
                 args.b = b;
@@ -203,7 +316,7 @@ module mkMixStage#(Integer stage_id)(MixStageIfc);
 
              end
           end
-         immediateFifo.enq(args);
+         immediateFifos[0].enq(args);
       endmethod
    endinterface
    interface Get response = toGet(outputFifo);

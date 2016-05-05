@@ -309,7 +309,7 @@ module mkFlashBusModel(FlashBusModelIfc);
 			//erase entire block
 			let regAddr = getRegAddr(cmd.block, erasePageCnt, eraseWordCnt);
 			flashArr[c].upd(regAddr, -1);
-			$display("%m FlashBus chip[%d] erasing tag=%d, blk = %d, pageCnt = %d, wordCnt = %d", c, cmd.tag, cmd.block, erasePageCnt, eraseWordCnt);
+		   //$display("%m FlashBus chip[%d] erasing tag=%d, blk = %d, pageCnt = %d, wordCnt = %d", c, cmd.tag, cmd.block, erasePageCnt, eraseWordCnt);
 
 			if (eraseWordCnt == fromInteger(pageWords-1)) begin //done page
 				eraseWordCnt <= 0;

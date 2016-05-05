@@ -8,7 +8,7 @@ import MemreadEngine::*;
 import MemwriteEngine::*;
 
 import ParameterTypes::*;
-
+import Vector::*;
 import FIFO::*;
 import FIFOF::*;
 import SpecialFIFOs::*;
@@ -27,6 +27,14 @@ interface DMAReadIfc;
    /*interface Put#(Bit#(128)) inPipe;
    interface Get#(Bit#(128)) outPipe;*/
 endinterface
+
+interface DMAReadVECIfc#(numeric type n);
+   interface Server#(Tuple3#(Bit#(32), Bit#(32), Bit#(64)), Bool) server;
+   interface Vector#(n,Client#(MemengineCmd,Bool)) dmaClients;
+   interface Vector#(n, Put#(Bit#(128))) inPipes;
+   interface Get#(Bit#(128)) outPipe;
+endinterface
+
 
 interface DMAWriteIfc;
    interface Server#(Tuple3#(Bit#(32), Bit#(32), Bit#(64)), Bool) server;
@@ -155,6 +163,153 @@ module mkDMAReader(DMAReadIfc);
    interface Client dmaClient = toClient(dmaReqQ, dmaRespQ);
    
 endmodule
+
+//(*synthesize*)
+module mkDMAReader_Vec(DMAReadVECIfc#(n));
+   
+   Reg#(Bit#(32)) burstCnt <- mkReg(0);
+ 
+   Vector#(n, FIFO#(MemengineCmd)) dmaReqQs <- replicateM(mkFIFO());
+   Vector#(n, FIFO#(Bool)) dmaRespQs <- replicateM(mkSizedFIFO(4));
+   Reg#(Bit#(32)) respCnt <- mkReg(0);
+   FIFO#(Bit#(32)) respMaxQ <- mkSizedFIFO(128);
+   
+   FIFO#(DMAReq) reqQ <- mkSizedFIFO(128);
+   FIFO#(Bool) doneQ <- mkSizedFIFO(128);
+   
+   Vector#(n, FIFO#(Bit#(128))) inQs <- replicateM(mkFIFO());
+   FIFO#(Bit#(128)) outQ <- mkFIFO();
+   
+   Reg#(Bit#(TLog#(n))) engSel <- mkReg(0);
+   FIFO#(Tuple2#(Bit#(TLog#(n)),Bit#(32))) byteMaxQ <- mkSizedFIFO(valueOf(n)*4);
+   FIFO#(Bit#(TLog#(n))) nextdmaResp <- mkSizedFIFO(valueOf(n)*4);
+   rule drive_read;
+
+      let args = reqQ.first();
+      let buffPtr = args.buffPtr;
+      let lastBurstSz = args.lastBurstSz;
+      let numBursts = args.numBursts;
+      let base = args.base;
+      //$display("drRdRq: engSel = %d, base = %d, burstCnt = %d, numBursts = %d, lastBurstSz = %d", engSel, base, burstCnt, numBursts, lastBurstSz);
+      if ( burstCnt + 1 == numBursts ) begin
+         dmaReqQs[engSel].enq(MemengineCmd{sglId:buffPtr, base:extend(base+(burstCnt<<7)), len:truncate(lastBurstSz), burstLen:truncate(lastBurstSz)});
+         reqQ.deq();
+         byteMaxQ.enq(tuple2(engSel, lastBurstSz));
+         nextdmaResp.enq(engSel);
+         burstCnt <= 0;
+         engSel <= engSel + 1;
+      end
+      else begin
+         //$display("Normal request");
+         dmaReqQs[engSel].enq(MemengineCmd{sglId:buffPtr, base:extend(base+(burstCnt<<7)), len:128, burstLen:128});
+         burstCnt <= burstCnt + 1;
+         byteMaxQ.enq(tuple2(engSel, 128));
+         nextdmaResp.enq(engSel);
+         engSel <= engSel + 1;
+      end
+   endrule
+
+   Reg#(Bit#(32)) rsCnt <- mkReg(0);
+   rule finish_fifo;
+      let sel <- toGet(nextdmaResp).get();
+      let rv1 <- toGet(dmaRespQs[sel]).get();
+      let respMax = respMaxQ.first();
+      if (respCnt + 1 == respMax) begin
+         respMaxQ.deq();
+         //$display("DMA Reader Done Ack, reqCnt = %d, respMax = %d", rsCnt, respMax);
+         rsCnt <= rsCnt + 1;
+         doneQ.enq(True);
+         respCnt <= 0;
+      end
+      else begin
+         respCnt <= respCnt + 1;
+      end
+   endrule
+   
+   Reg#(Bit#(32)) byteCnt <- mkReg(0);
+   
+   rule filter_data;
+      let sel = tpl_1(byteMaxQ.first());
+      let byteMax = tpl_2(byteMaxQ.first());
+      let d <- toGet(inQs[sel]).get();
+      
+      //$display("DMA Reader Getting Data %h, byteCnt = %d", d, byteCnt);
+      
+      outQ.enq(d);
+      
+      if (byteCnt + 16 >= byteMax) begin
+         byteMaxQ.deq();
+         byteCnt <= 0;
+      end
+      else begin
+         byteCnt <= byteCnt + 16;
+      end
+   endrule
+   
+   Vector#(n,Client#(MemengineCmd,Bool)) dmaClis;
+   for ( Integer i = 0; i < valueOf(n); i = i+1 ) begin
+      dmaClis[i] = toClient(dmaReqQs[i], dmaRespQs[i]);
+   end
+   
+   Vector#(n, Put#(Bit#(128))) ins;
+   for ( Integer i = 0; i < valueOf(n); i=i+1 ) begin
+      ins[i] = toPut(inQs[i]);
+   end
+   
+
+   
+   Reg#(Bit#(32)) rdCnt <- mkReg(0);
+   
+   interface Server server;
+      interface Put request;
+         method Action put(Tuple3#(Bit#(32), Bit#(32), Bit#(64)) v);
+            let rp = tpl_1(v);
+            let base = tpl_2(v);
+            let nBytes = tpl_3(v);
+            rdCnt <= rdCnt + 1;
+            //$display("DMAHelper read request, rp = %d, base = %d, nBytes = %d, reqCnt = %d",rp, base, nBytes, rdCnt);
+            Bit#(32) numBursts = truncate(nBytes >> 7);
+           
+            Bit#(32) lastBurstSz;
+            Bit#(32) buffPtr;
+            if ( nBytes[3:0] == 0 )
+               lastBurstSz = extend(nBytes[6:0]);
+            else
+               lastBurstSz = (extend(nBytes[6:4])+1)<<4;
+      
+            if ( nBytes[6:0] != 0) begin
+               numBursts = numBursts + 1;
+            end
+            else begin
+               lastBurstSz = 128;
+            end
+      
+            buffPtr = rp;
+   
+            //lastBurstSz = 128;
+   
+            //byteMaxQ.enq(tuple2(numBursts << 7, truncate(nBytes)));
+         
+            if ( base[6:0] != 0 ) begin
+               $display("base is not word aligned");
+               $finish();
+            end
+      
+            reqQ.enq(DMAReq{numBursts: numBursts, lastBurstSz: lastBurstSz, buffPtr: buffPtr, base: base});
+            respMaxQ.enq(numBursts);
+         endmethod
+      endinterface
+      interface Get response = toGet(doneQ);
+   endinterface
+   
+   interface Put inPipes = ins;
+   interface Get outPipe = toGet(outQ);
+
+
+   interface Client dmaClients = dmaClis;
+   
+endmodule
+
 
 (*synthesize*)
 module mkDMAWriter(DMAWriteIfc);

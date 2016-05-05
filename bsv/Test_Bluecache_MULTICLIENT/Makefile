@@ -1,5 +1,5 @@
 SRC_BSV=/home/shuotao/fpgamemcached/bsv/
-CONNECTALDIR?=~/tools/connectal/
+CONNECTALDIR?=~/tools/connectal_bluedbm/
 INTERFACES = BluecacheRequest BluecacheIndication
 BSVFILES = Bluecache.bsv Top.bsv
 CPPFILES=TestBluecache.cpp BluecacheClient.cpp bluecachedaemon.cpp
@@ -8,7 +8,7 @@ BSVDIR= $(SRC_BSV):$(SRC_BSV)/time:$(SRC_BSV)/hash:$(SRC_BSV)/hashtable_simple:$
 
 #DATA_BUS_WIDTH=128
 #NUMBER_OF_MASTERS=1
-CONNECTALFLAGS = --cflags " -I/usr/lib/jvm/java-1.7.0-openjdk-amd64/include/ -I/usr/lib/jvm/java-1.7.0-openjdk-amd64/include/linux" -D IMPORT_HOSTIF -D PinType=Top_Pins -D DataBusWidth=128 -D Debug --clib rt --bscflags " -p +:$(BSVDIR) -u -steps-max-intervals 200000 -D DataBusWidth=128 -D Debug"
+CONNECTALFLAGS = --cflags " -I/usr/lib/jvm/java-1.7.0-openjdk-amd64/include/ -I/usr/lib/jvm/java-1.7.0-openjdk-amd64/include/linux " -D IMPORT_HOSTIF -D PinType=Top_Pins -D DataBusWidth=128 -D Debug --clib rt --bscflags " -p +:$(BSVDIR) -u -steps-max-intervals 200000 -D DataBusWidth=128 -D Debug"
 
 
 ifeq ($(BOARD), vc707)

@@ -28,7 +28,7 @@ import DDR3Sim::*;
 import DRAMController::*;
 import Connectable::*;
 import Time::*;
-import ValDRAMCtrl::*;
+import ValDRAMCtrl_128::*;
 
 interface SimpleIndication;
    method Action done( Bit#(64) v);
@@ -101,7 +101,7 @@ module mkSimpleRequest#(SimpleIndication indication)(SimpleRequest);
       cycleCnt <= 0;
       started <= True;
       cntMaxQ.enq(nReqs);
-      respMaxQ.enq(nReqs*8);
+      respMaxQ.enq(nReqs*4);
    endmethod
 
 endmodule

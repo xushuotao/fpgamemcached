@@ -60,7 +60,7 @@ int main(int argc, const char **argv)
 
   srand(time(NULL));
   for ( int i = 1; i <= 256; i++) {
-    size_t keylen = i;//64;//rand()%257;
+    size_t keylen = rand()%256+1;
     char* key = new char[keylen];
     for (uint32_t i = 0; i < keylen; i++) {
       key[i] = rand();
@@ -68,6 +68,7 @@ int main(int argc, const char **argv)
     }
     pthread_mutex_lock(&mu);
 
+    fprintf(stderr, "Main:: round = %d\n", i);
     fprintf(stderr, "Main:: keylen = %d\n", keylen);
   
     hash_val = jenkins_hash((void*)key, keylen); 

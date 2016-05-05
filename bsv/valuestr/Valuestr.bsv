@@ -37,10 +37,11 @@ import ValDRAMArbiter::*;
 
 
 import ParameterTypes::*;
+import Time::*;
 
 
 
-(*synthesize*)
+//(*synthesize*)
 module mkValueStore(ValuestrIFC);
    FIFO#(ValstrCmdType) reqQ <- mkSizedFIFO(numStages);
    //FIFO#(FlashAddrType) wrRespQ <- mkFIFO;   
@@ -50,6 +51,7 @@ module mkValueStore(ValuestrIFC);
 
    FIFO#(Tuple2#(WordT, TagT)) dramRdRespQ <- mkFIFO;
 
+   Integer flashHeaderSz = valueOf(TSub#(BytesOf#(ValHeader),BytesOf#(Time_t)));
 
    let dramValueStore <- mkValDRAMCtrl();
    let flashValueStore <- mkFlashValueStore();
@@ -62,6 +64,8 @@ module mkValueStore(ValuestrIFC);
 
    
    mkConnection(dramValueStore.flashWriteClient, flashValueStore.writeServer);
+   // mkConnection(dramValueStore.flashWriteClient.writeClient.response, flashValueStore.writeServer.writeServer.response);
+   // mkConnection(dramValueStore.flashWriteClient.writeWord, flashValueStore.writeServer.writeWord);
    mkConnection(toPut(dramRdRespQs[0]), flashValueStore.readServer.dramResp);
    
    mkConnection(toPut(dramBurstSzQs[0]), flashValueStore.readServer.dramBurstSz);
@@ -104,6 +108,9 @@ module mkValueStore(ValuestrIFC);
                                                    old_idx: req.old_idx,
                                                    old_nBytes: req.old_nBytes
                                                    });
+      // if (req.doEvict)
+      //    flashValueStore.writeServer.writeServer.request.put(req.old_nBytes + fromInteger(flashHeaderSz));
+         
    endrule
    
    rule connWrDta;
@@ -119,8 +126,8 @@ module mkValueStore(ValuestrIFC);
       if (req.addr.onFlash) begin
          //$finish;
          flashValueStore.readServer.request.put(FlashReadReqT{addr: unpack(truncate(req.addr.valAddr)),
-                                                                         numBytes: req.nBytes,
-                                                                         reqId: req.reqId});
+                                                              numBytes: req.nBytes,
+                                                              reqId: req.reqId});
       end
       else begin
          dramValueStore.user.readReq(extend(req.addr.valAddr), extend(req.nBytes));

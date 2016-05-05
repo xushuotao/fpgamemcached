@@ -20,7 +20,7 @@ typedef enum{DoHeader, DoValueTokens} State deriving (Bits, Eq);
 
 typedef BytesOf#(Protocol_Binary_Response_Header) RespHeaderBytes;
 
-//(*synthesize*)
+(*synthesize*)
 module mkResponseFormatter(ResponseFormatter);
    /*FIFO#(Bit#(32)) reqQ <- mkFIFO;
    FIFO#(Bit#(32)) reqQ_1 <- mkFIFO;*/

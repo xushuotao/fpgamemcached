@@ -73,8 +73,8 @@ set_max_delay -from [get_clocks auroraI_init_clk_i] -to [get_clocks auroraI_user
 
 #CDC from auroraI_user_clk_i to/from clkgen_pll_CLKOUT0 (125mhz system clk)
 #Warning: The following constraints must be sourced AFTER vc707.xdc!
-set_max_delay -from [get_clocks clk_125mhz]] -to [get_clocks auroraI_user_clk_i] -datapath_only 8.0
-set_max_delay -from [get_clocks auroraI_user_clk_i] -to [get_clocks clk_125mhz]] -datapath_only 8.0
+set_max_delay -from [get_clocks clk_125mhz] -to [get_clocks auroraI_user_clk_i] -datapath_only 8.0
+set_max_delay -from [get_clocks auroraI_user_clk_i] -to [get_clocks clk_125mhz] -datapath_only 8.0
 
 
 #CDC from auroraIntra clocks to/from clkgen_pll_CLKOUT0 (125mhz system clk)

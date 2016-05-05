@@ -938,6 +938,15 @@ void *decode_response(void *ptr){
       resp_cnt = 0;
       pthread_cond_signal(&cond_write);
       pthread_mutex_unlock(&mu_write);
+    } else if (resphdr.response.opcode == PROTOCOL_BINARY_CMD_DELETE ) {
+      assert(resphdr.response.magic == PROTOCOL_BINARY_RES );
+
+      assert(resphdr.response.bodylen == 0);
+      // pthread_mutex_lock(&mu_write);
+      // num_resps = resp_cnt;
+      // resp_cnt = 0;
+      // pthread_cond_signal(&cond_write);
+      // pthread_mutex_unlock(&mu_write);
     } else {
       printhdr(resphdr);
       fprintf(stderr,"Main: Response not supported\n");

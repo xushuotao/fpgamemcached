@@ -34,11 +34,18 @@ uint64_t rdAddr;
 class SimpleIndication : public SimpleIndicationWrapper
 {  
 public:
-  virtual void getVal(uint64_t a){
+
+  uint32_t idCnt;
+  virtual void getVal(uint64_t a, uint32_t tag){
     pthread_mutex_lock(&mu);
     rdArray[burstCnt++] = a;
+    if ( (idCnt&((1<<7)-1)) != tag) {
+      fprintf(stderr, "Error:: reqId doesn't match\n");
+      exit(0);
+    }
     //
     if (burstCnt == burstLimit){
+      idCnt++;
       gettimeofday(&t2, NULL);
       elapsedTime = (t2.tv_sec - t1.tv_sec) * 1000.0;      // sec to ms
       elapsedTime += (t2.tv_usec - t1.tv_usec) / 1000.0;   // us to ms
@@ -60,7 +67,7 @@ public:
     pthread_mutex_unlock(&mu);
   }
   
-  SimpleIndication(unsigned int id) : SimpleIndicationWrapper(id){}
+  SimpleIndication(unsigned int id) : SimpleIndicationWrapper(id), idCnt(0){}
 };
 
 int main(int argc, const char **argv)
@@ -142,7 +149,7 @@ int main(int argc, const char **argv)
 
     rdAddr = addrVec[i];
     numBytes = sizeVec[i];
-    device->readReq(rdAddr,numBytes);
+    device->readReq(rdAddr,numBytes, i);
     int loopCnt = (int)ceil(numBytes/8.0);
     rdArray = new uint64_t[loopCnt];
     burstLimit = loopCnt;

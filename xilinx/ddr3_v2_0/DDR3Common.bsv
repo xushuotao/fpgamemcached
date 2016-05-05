@@ -38,10 +38,10 @@ import Connectable       ::*;
 typedef struct {
    Bool        simulation;
    Integer     reads_in_flight;
-} DDR3_Configure;
+} DDR3_Configure_1G;
 
-instance DefaultValue#(DDR3_Configure);
-   defaultValue = DDR3_Configure {
+instance DefaultValue#(DDR3_Configure_1G);
+   defaultValue = DDR3_Configure_1G {
       simulation:       False,
       reads_in_flight:  8
       };
@@ -187,7 +187,7 @@ module mkAsyncResetLong#(Integer cycles, Reset rst_in, Clock clk_out)(Reset);
    return rstifc.new_rst;
 endmodule
 
-module mkXilinxDDR3Controller_2_1_#(VDDR3_Controller_Xilinx#(`DDR3_PRM) ddr3Ifc, DDR3_Configure cfg)(DDR3_Controller#(`DDR3_PRM))
+module mkXilinxDDR3Controller_2_1_#(VDDR3_Controller_Xilinx#(`DDR3_PRM) ddr3Ifc, DDR3_Configure_1G cfg)(DDR3_Controller#(`DDR3_PRM))
    provisos( Add#(0, 2, clkratio)
 	   , Add#(_1, 8, ddr3datasize)
 	   , Add#(_2, 1, ddr3addrsize)

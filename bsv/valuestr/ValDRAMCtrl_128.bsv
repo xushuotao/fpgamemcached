@@ -53,7 +53,7 @@ interface ValDRAMCtrlIFC;
 endinterface
 
 
-(*synthesize*)
+//(*synthesize*)
 module mkValDRAMCtrl(ValDRAMCtrlIFC);
    
    Integer evictOffset = valueOf(BytesOf#(Time_t));
@@ -117,6 +117,7 @@ module mkValDRAMCtrl(ValDRAMCtrlIFC);
    
    FIFO#(ValSizeT) flashReqQ <- mkFIFO();
    FIFO#(FlashAddrType) flashRespQ <- mkFIFO();
+   FIFO#(Bool) fireQ <- mkFIFO();
    
    let flashWrCli = (interface FlashWriteClient;
                         interface Client writeClient = toClient(flashReqQ, flashRespQ);
@@ -126,6 +127,7 @@ module mkValDRAMCtrl(ValDRAMCtrlIFC);
                               return tpl_1(v);
                            endmethod
                         endinterface
+                        interface Put firewire = toPut(fireQ);
                      endinterface);
    
    rule doFlashResp;
@@ -134,14 +136,13 @@ module mkValDRAMCtrl(ValDRAMCtrlIFC);
       $display("%m:: got writebuf resp hv = %h, idx = %d, addr = %d", tpl_1(v), tpl_2(v), addr);
       hdrUpdQ.enq(HeaderUpdateReqT{hv: tpl_1(v), idx: tpl_2(v), flashAddr: addr});
    endrule
-   
 
    //ByteDeAlignIfc#(Bit#(512), Bit#(0)) deAlign <- mkByteDeAlignPipeline();
    //ByteDeAlignIfc#(Bit#(512), Bit#(0)) deAlign <- mkByteDeAlignCombinational();
    //ByteDeAlignIfc#(Bit#(128), Bit#(0)) deAlign <- mkByteDeAlignCombinational();
    ByteAlignIfc#(Bit#(128), void) align <- mkByteAlignCombinational;
    ByteDeAlignIfc#(Bit#(128), void) deAlign <- mkByteDeAlignCombinational_regular();
-   
+
    
    Reg#(ValSizeT) byteCnt_Evict <- mkReg(0);
    rule doHeader if (state == ProcHeader);
@@ -168,9 +169,11 @@ module mkValDRAMCtrl(ValDRAMCtrlIFC);
             desCmdQ.enq(cmd);
             cmdQ_Wr.enq(cmd);
             deAlign.deAlign(truncate(cmd.byteOffset), cmd.numBytes,?);
+            if ( cmd.doEvict) fireQ.deq();
             state <= Proc;
          end
          else begin
+            let v = fireQ.first();
             let addr = cmd.currAddr + fromInteger(evictOffset) + extend(byteCnt_Evict);
             let rowidx = addr >> 6;
             $display("Valstr issuing read cmd for eviction: reqId = %d, currAddr = %d", cmd.reqId, addr);
@@ -333,7 +336,7 @@ module mkValDRAMCtrl(ValDRAMCtrlIFC);
       end
    endrule
 
-
+   Reg#(Bit#(32)) evictCnt <- mkReg(0);
    interface ValDRAMUser user;
       
       method Action readReq(Bit#(64) startAddr, Bit#(64) nBytes);
@@ -365,7 +368,8 @@ module mkValDRAMCtrl(ValDRAMCtrlIFC);
                           reqId: reqCnt});
    
          if (req.doEvict) begin
-            $display("Value Eviction is needed: old_hv = %h, old_idx = %d, numBytes = %d, addr = %d", req.old_hv, req.old_idx, req.addr+ fromInteger(valueOf(BytesOf#(Time_t))), req.old_nBytes+fromInteger(flashHeaderSz));
+            $display("Value Eviction is needed: old_hv = %h, old_idx = %d, addr = %d, numBytes = %d, reqCnt = %d", req.old_hv, req.old_idx, req.addr+ fromInteger(valueOf(BytesOf#(Time_t))), req.old_nBytes+fromInteger(flashHeaderSz), evictCnt);
+            evictCnt <= evictCnt + 1;
             flashReqQ.enq(req.old_nBytes+fromInteger(flashHeaderSz));
             align_evict.align(truncate(req.addr+ fromInteger(valueOf(BytesOf#(Time_t)))), extend(req.old_nBytes)+fromInteger(flashHeaderSz), ?);
             hdrUpdQ_pre.enq(tuple2(req.old_hv, req.old_idx));
@@ -375,6 +379,7 @@ module mkValDRAMCtrl(ValDRAMCtrlIFC);
       endmethod
       
       method Action writeVal(WordT wrVal); 
+         $display("Value store enqueing data, %h", wrVal);
          wDataWord.enq(wrVal);
       endmethod
    
@@ -385,5 +390,7 @@ module mkValDRAMCtrl(ValDRAMCtrlIFC);
    interface FlashWriteClient flashWriteClient = flashWrCli;
    
    interface Get htableRequest = toGet(hdrUpdQ);
+   
+
 
 endmodule

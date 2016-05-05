@@ -89,7 +89,8 @@ int flush_type_req_1 = 0;
 int flush_type_req_2 = 0;
 int flush_type_req_3 = 0;
 
-
+double diff_0;
+double diff_1;
 
 unsigned int old_dma_requests = 0;
 int old_batched_requests = 0;
@@ -97,7 +98,9 @@ int old_outstanding_requests = 0;
 int old_dma_responses = 0;
 
 //timespec interval_start;
-//timespec start, now;
+timespec* start_wait;
+timespec* hardware;
+timespec* software;
 double avgSendLatency = 0;
 double avgLatency = 0;
 //int numGets = 0;
@@ -128,6 +131,8 @@ pthread_cond_t cond, cond_write;
 // char** valArray;
 // int* keylenArray;
 // int* vallenArray;
+extern int num_Gets;
+extern int num_Sets;
 
 
 bool* setStatus;
@@ -554,7 +559,10 @@ void storePerfNumber(){
 //pthread_spinlock_t spinlock;
 pthread_mutex_t mutexlock;
 
+//pthread_mutex_t waitlock;
+
 sem_t* lockList;
+//pthread_cond_t * condList;
 bool** successList;
 unsigned char*** valBufList;
 size_t** valSizeList;
@@ -564,6 +572,7 @@ int initMainThread(){
   
   pthread_mutex_lock(&mutexlock);
   sem_t* lockList_temp = new sem_t[clientCnt+1];
+  //pthread_cond_t * condList_temp = new pthread_cond_t[clientCnt+1];
   bool** successList_temp = new bool*[clientCnt+1];
   unsigned char*** valBufList_temp = new unsigned char**[clientCnt+1];
   size_t** valSizeList_temp = new size_t*[clientCnt+1];
@@ -571,20 +580,23 @@ int initMainThread(){
   if ( clientCnt > 0 ){
     for ( int i = 0; i < clientCnt; i++){
       lockList_temp[i] = lockList[i];
+      //condList_temp[i] = condList[i];
       successList_temp[i] = successList[i];
       valBufList_temp[i] = valBufList[i];
       valSizeList_temp[i] = valSizeList[i];
     }
     delete(lockList);
+    //delete(condList);
     delete(successList);
     delete(valBufList);
     delete(valSizeList);
   }
-  //mutex = mutex_temp;
   lockList = lockList_temp;
-  //sem_init(lockList+clientCnt, 1, 0);
+  //condList = condList_temp;
+  
   for (int i = 0; i < clientCnt + 1; i++ ){
     sem_init(lockList+i, 1, 0);
+    //pthread_cond_init(&condList[i], NULL);
   }
   successList = successList_temp;
   valBufList = valBufList_temp;
@@ -598,6 +610,7 @@ int initMainThread(){
 void initBluecacheProxy(){
   //pthread_spin_init(&spinlock, 0);
   pthread_mutex_init(&mutexlock, NULL);
+  pthread_mutex_init(&waitlock, NULL);
 
   if(sem_init(&initDone_sem, 1, 0)){
     fprintf(stderr, "failed to init done_sem\n");
@@ -656,8 +669,11 @@ void initBluecacheProxy(){
   int numBufs = ALLOC_SZ/DMABUF_SZ;
 
   srand(time(NULL));
-  device->initDMARefs(ref_srcAlloc, ref_dstAlloc);
   device->reset(rand());
+  sleep(0.5);
+
+  device->initDMARefs(ref_srcAlloc, ref_dstAlloc);
+
 
   dmaRdEnqPtr=NUM_BUFS;
   dmaRdDeqPtr=0;
@@ -686,37 +702,38 @@ void *flush_request(void *ptr){
     pthread_mutex_lock(&mutexlock);
     int outstanding_reqs = atomic_read(&outstanding_requests);
     int dma_resps = atomic_read(&dma_responses);
-	int sleep = 0;
+    int sleep = 0;
 
     if ( !flushing  ){
-      if ( batched_requests >= 64) {
-        flush_type_0++;
-		flush_type_req_0 += batched_requests;
-        flushDmaBuf();
-	  } else {
-		if (flush_type_req_0 >= 6400 - 64) {
-        	flushDmaBuf();
-		}
-	  }
-		/*
-	  } else if ( batched_requests > 0 && old_batched_requests == batched_requests && old_dma_requests == dma_requests ) {
+      // if ( batched_requests >= 64) {
+      //   flush_type_0++;
+      //   flush_type_req_0 += batched_requests;
+      //   flushDmaBuf();
+      // } else {
+      //   if (flush_type_req_0 >= 6400 - 64) {
+      //     flushDmaBuf();
+      //   }
+      // }
+		
+      //	  } else
+      if ( batched_requests > 0 && old_batched_requests == batched_requests && old_dma_requests == dma_requests ) {
         //fprintf(stderr, "batched_requests = %d, old_batched_requests = %d, dma_requests = %d, old_dma_requests = %d, num_of_flushes = %d\n", batched_requests, old_batched_requests, dma_requests, old_dma_requests, num_of_flushes++);
-		flush_type_1++;
-		flush_type_req_1 += batched_requests;
+        flush_type_1++;
+        flush_type_req_1 += batched_requests;
         flushDmaBuf();
         flushing = true;
-		sleep = 1;
+        sleep = 1;
       } else if ( outstanding_reqs > 0 && outstanding_reqs == old_outstanding_requests && old_dma_responses == dma_resps ){
         //fprintf(stderr, "outstanding_requests = %d, old_outstanding_requests = %d, dma_responses = %d, old_dma_responses = %d, num_of_flushes = %d\n", outstanding_reqs, old_outstanding_requests, dma_resps, old_dma_responses, num_of_flushes++);
-		flush_type_2++;
-		flush_type_req_2 += batched_requests;
+        flush_type_2++;
+        flush_type_req_2 += batched_requests;
         flushDmaBuf();
         flushing = true;
-		sleep = 1;
+        sleep = 1;
       } else {
         flush_type_x++;
-	  }
-		*/
+      }
+		
     }
     old_batched_requests = batched_requests;
     old_dma_requests = dma_requests;
@@ -725,70 +742,92 @@ void *flush_request(void *ptr){
     //pthread_spin_unlock(&spinlock);
     pthread_mutex_unlock(&mutexlock);
 
-	//if (sleep)
-	//	usleep(100);
+    if (sleep)
+      usleep(200);
   } 
 }
 
-int numReqs = 0;
+int numSetReqs = 0;
 int numFlushes = 0;
 void sendSet(void* key, void* val, size_t keylen, size_t vallen, uint32_t opaque, bool* success){
   //pthread_spin_lock(&spinlock);
   pthread_mutex_lock(&mutexlock);
-  //fprintf(stderr, "Main:: send Set request, clientId = %d, numReqs = %d\n", opaque, numReqs);
+  fprintf(stderr, "Main:: send Set request, clientId = %d, numSetReqs = %d\n", opaque, numSetReqs);
   sendSet(key, val, keylen, vallen, opaque);
-  //fprintf(stderr, "Main:: send Set numReqs = %d, clientCnt = %d\n", numReqs, clientCnt);
-  if (numReqs == (6399)){
-    //fprintf(stderr, "Main:: flushing pipeline, flushCnt = %d\n", numFlushes++);
-    flushDmaBuf();
-    flushing = true;
-  }
+  //fprintf(stderr, "Main:: send Set numSetReqs = %d, clientCnt = %d\n", numSetReqs, clientCnt);
+  // if (numSetReqs% clientCnt == clientCnt - 1) {
+  //   //fprintf(stderr, "Main:: flushing pipeline, flushCnt = %d\n", numFlushes++);
+  //   flushDmaBuf();
+  //   flushing = true;
+  // } else if ( numSetReqs > (clientCnt*num_Sets - clientCnt) ) {
+  //   flushDmaBuf();
+  //   // flushed = true;
+  // }
 
-  numReqs++;
+  numSetReqs++;
   //fprintf(stderr, "Main:: send Set return pointers, clientId = %d\n", opaque);  
   successList[opaque] = success;
   //pthread_spin_unlock(&spinlock);
   pthread_mutex_unlock(&mutexlock);
-  //fprintf(stderr,"Main:: sendSet start waiting, clientId = %d\n", opaque);
+  fprintf(stderr,"Main:: sendSet start waiting, clientId = %d\n", opaque);
   //pthread_yield();
   sem_wait(&lockList[opaque]);
-  //fprintf(stderr,"Main:: sendSet done waiting, clientId = %d\n", opaque);
+  fprintf(stderr,"Main:: sendSet done waiting, clientId = %d\n", opaque);
+  // pthread_mutex_lock(&waitlock);
+  // pthread_cond_wait(condList+opaque, &waitlock);
+  // pthread_mutex_unlock(&waitlock);
 }
+
+int numGetReqs = 0;
+int numGetReqs_ = 0;
+bool flushed = false;
 void sendGet(void* key, size_t keylen, uint32_t opaque, unsigned char** val, size_t* vallen){
-  timespec start, end;
-  clock_gettime(CLOCK_REALTIME, &start);
-  //fprintf(stderr, "Main:: send Get request trying to grab lock, clientId = %d\n", opaque);
+  //timespec start, end;
+  //clock_gettime(CLOCK_REALTIME, &start);
+  fprintf(stderr, "Main:: send Get request trying to grab lock, clientId = %d\n", opaque);
   //pthread_spin_lock(&spinlock);
   pthread_mutex_lock(&mutexlock);
   sendGet(key, keylen, opaque);
-  //fprintf(stderr, "Main:: send Get numReqs = %d, clientCnt = %d\n", numReqs, clientCnt);
-  /*
-  if ( numReqs % clientCnt == clientCnt - 1 ){
-    //fprintf(stderr, "Main:: flushing pipeline, flushCnt = %d\n", numFlushes++);
-    flushDmaBuf();
-    flushing = true;
-  }
-  */
+  //fprintf(stderr, "Main:: send Get numSetReqs = %d, clientCnt = %d\n", numSetReqs, clientCnt);
+  // if ( numGetReqs % clientCnt == clientCnt - 1 ){
+  //   //fprintf(stderr, "Main:: flushing pipeline, flushCnt = %d\n", numFlushes++);
+  //   flushDmaBuf();
+  //   flushing = true;
+  // } else if ( numGetReqs > (clientCnt*num_Gets - clientCnt) ) {
+  //   flushDmaBuf();
+  //   flushed = true;
+  // }
+ 
 
-  numReqs++;
+  numGetReqs++;
   //fprintf(stderr, "Main:: send Get return pointers, clientId = %d\n", opaque);  
   valBufList[opaque] = val;
   valSizeList[opaque] = vallen;
   //pthread_spin_unlock(&spinlock);
   pthread_mutex_unlock(&mutexlock);
-  //fprintf(stderr,"Main:: sendGet start waiting, clientId = %d\n", opaque);
-  clock_gettime(CLOCK_REALTIME, &end);
-  double diff = timespec_diff_usec(start, end);
-  //avgSendLatency = avgSendLatency*(double)numGets/(double)(numGets+1) + diff/(double)(numGets+1);
-  //pthread_yield();
+  fprintf(stderr,"Main:: sendGet start waiting, clientId = %d\n", opaque);
+  // clock_gettime(CLOCK_REALTIME, &end);
+  // double diff = timespec_diff_usec(start, end);
+  // //avgSendLatency = avgSendLatency*(double)numGets/(double)(numGets+1) + diff/(double)(numGets+1);
+  // //pthread_yield();
   sem_wait(&lockList[opaque]);
-  clock_gettime(CLOCK_REALTIME, &end);
-  diff = timespec_diff_usec(start, end);
-  int nGets = atomic_read(&numGets);
-  avgLatency = avgLatency*(double)nGets/(double)(nGets+1) + diff/(double)(nGets+1);
-  //fprintf(stderr,"Main:: sendGet get Result from FPGA, clientId = %d, numGets = %d\n", opaque, nGets);
-  //numGets++;
-  atomic_inc(&numGets);
+
+  // pthread_mutex_lock(&waitlock);
+  // clock_gettime(CLOCK_REALTIME, start_wait+opaque);
+  // pthread_cond_wait(condList+opaque, &waitlock);
+  // clock_gettime(CLOCK_REALTIME, software+opaque);
+  // diff_1 = diff_1*numGetReqs_/(numGetReqs_+1) + timespec_diff_usec(hardware[opaque], software[opaque])/(numGetReqs_+1);
+  // numGetReqs_++;
+
+  // pthread_mutex_unlock(&waitlock);
+
+  // clock_gettime(CLOCK_REALTIME, &end);
+  // diff = timespec_diff_usec(start, end);
+  // int nGets = atomic_read(&numGets);
+  // avgLatency = avgLatency*(doupble)nGets/(double)(nGets+1) + diff/(double)(nGets+1);
+  // //fprintf(stderr,"Main:: sendGet get Result from FPGA, clientId = %d, numGets = %d\n", opaque, nGets);
+  // //numGets++;
+  // atomic_inc(&numGets);
 }
 void sendDelete(void* key, size_t keylen, uint32_t opaque, bool* success){
   //pthread_spin_lock(&spinlock);
@@ -801,16 +840,22 @@ void sendDelete(void* key, size_t keylen, uint32_t opaque, bool* success){
     flushing = true;
   }
   */
-  numReqs++;
+  // numReqs++;
   successList[opaque] = success;
   //pthread_spin_unlock(&spinlock);
   pthread_mutex_unlock(&mutexlock);
   sem_wait(&lockList[opaque]);
+  
+ 
+  // pthread_mutex_lock(&waitlock);
+  // pthread_cond_wait(condList+opaque, &waitlock);
+  // pthread_mutex_unlock(&waitlock);
 }
            
 
 void *decode_response(void *ptr){
   int respCnt = 0;
+  int numGetResp = 0;
   protocol_binary_response_header resphdr;
   while (true){
     dmaBufMemreadBuf(&resphdr, sizeof(protocol_binary_response_header));
@@ -831,6 +876,9 @@ void *decode_response(void *ptr){
         *(successList[resphdr.response.opaque]) = true;
       }
       sem_post(&(lockList[resphdr.response.opaque]));
+      // pthread_mutex_lock(&waitlock);
+      // pthread_cond_signal(condList+resphdr.response.opaque);
+      // pthread_mutex_unlock(&waitlock);
     } else if (resphdr.response.opcode == PROTOCOL_BINARY_CMD_GET){
       //      fprintf(stderr, "Main:: Get RespCnt = %d\n", respCnt++);
       if(resphdr.response.status == PROTOCOL_BINARY_RESPONSE_SUCCESS){
@@ -845,6 +893,14 @@ void *decode_response(void *ptr){
         //get_fails++;
       }
       sem_post(&(lockList[resphdr.response.opaque]));
+      int opaque = resphdr.response.opaque;
+      //clock_gettime(CLOCK_REALTIME, hardware+opaque);
+      // diff_0 = diff_0*numGetResp/(numGetResp+1) + timespec_diff_usec(start_wait[opaque], hardware[opaque])/(numGetResp+1);
+      // numGetResp++;
+      // pthread_mutex_lock(&waitlock);
+      // pthread_cond_signal(condList+resphdr.response.opaque);
+      // pthread_mutex_unlock(&waitlock);
+
     } else if (resphdr.response.opcode == PROTOCOL_BINARY_CMD_EOM ){
       //dmaBufMemreadBuf(&resphdr, sizeof(protocol_binary_response_header));
       //printhdr(resphdr);
@@ -869,6 +925,10 @@ void *decode_response(void *ptr){
       assert(resphdr.response.bodylen == 0);
       *(successList[resphdr.response.opaque]) = true;
       sem_post(&(lockList[resphdr.response.opaque]));
+      // pthread_mutex_lock(&waitlock);
+      // pthread_cond_signal(condList+resphdr.response.opaque);
+      // pthread_mutex_unlock(&waitlock);
+      
     } else {
       printhdr(resphdr);
       fprintf(stderr,"Main: Response not supported\n");
@@ -877,4 +937,7 @@ void *decode_response(void *ptr){
     //    fprintf(stderr, "Main:: finish checking a response\n");
     atomic_dec(&outstanding_requests);
   }
+}
+
+int main(){
 }

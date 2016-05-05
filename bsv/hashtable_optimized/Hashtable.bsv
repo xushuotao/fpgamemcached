@@ -9,10 +9,10 @@ import Vector::*;
 import DRAMController::*;
 import DDR3::*;
 import Time::*;
-import Valuestr::*;
+import ValueManager::*;
 import HtArbiterTypes::*;
 import HtArbiter::*;
-import DRAMArbiterTypes::*;
+import DRAMCommon::*;
 import DRAMArbiter::*;
 
 //`define DEBUG
@@ -33,12 +33,12 @@ interface HashtableIfc;
    method ActionValue#(HtRespType) getValAddr();
    interface HashtableInitIfc init;
    interface DRAMClient dramClient;
-   
+   interface Put#(HeaderUpdateReqT) hdrUpdateRequest;
 endinterface
 
 
 //(*synthesize*)
-module mkAssocHashtb#(Clk_ifc real_clk, ValAlloc_ifc valAlloc)(HashtableIfc);
+module mkAssocHashtb#(Clk_ifc real_clk, ValAllocIFC valAlloc)(HashtableIfc);
    Reg#(Bit#(64)) addrTop <- mkRegU();
   
    let htArbiter <- mkHtArbiter();
@@ -57,6 +57,8 @@ module mkAssocHashtb#(Clk_ifc real_clk, ValAlloc_ifc valAlloc)(HashtableIfc);
    mkConnection(hdrWriter.dramEP, htArbiter.hdrWr);
    mkConnection(keyWriter.dramEP, htArbiter.keyWr);
    */
+   
+   mkConnection(hdrWriter.hdrUpdDramClient, htArbiter.hdrUpdServer);
       
    FIFO#(Bit#(64)) keyTks <- mkFIFO;
       
@@ -175,6 +177,7 @@ module mkAssocHashtb#(Clk_ifc real_clk, ValAlloc_ifc valAlloc)(HashtableIfc);
    endinterface
    
    interface DRAMClient dramClient = dramSwitch.dramClient;
+   interface Put hdrUpdateRequest = hdrWriter.hdrUpdateRequest;
 endmodule
 
 endpackage: Hashtable

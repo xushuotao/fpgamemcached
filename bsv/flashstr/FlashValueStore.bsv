@@ -24,15 +24,16 @@ module mkFlashValueStore(FlashValueStoreIfc);
    mkConnection(writeBuffer.flashFlClient, valFlashCtrl.flushServer);
    mkConnection(writeBuffer.flashRdClient, valFlashCtrl.readServer);
    
-   let dramArb <- mkDRAM_LOCK_Biased_Arbiter_Bypass;
+   DRAM_LOCK_Arbiter#(2) dramArb <- mkDRAM_LOCK_Arbiter();
+   mkConnection(dramArb.ack, valFlashCtrl.ack);
    
    mkConnection(dramArb.dramServers[0], writeBuffer.dramClient);
    mkConnection(dramArb.dramServers[1], valFlashCtrl.dramClient);
 
    
    interface FlashWriteServer writeServer = writeBuffer.writeUser;
-   interface FlashValueStoreReadServer readServer = writeBuffer.readUser;
-   interface DRAM_LOCK_Client dramClient = dramArb.dramClient;
+   interface FlashReadServer readServer = writeBuffer.readUser;
+   interface DRAMClient dramClient = dramArb.dramClient;
    interface FlashRawWriteClient flashRawWrClient = valFlashCtrl.flashRawWrClient;
    interface FlashRawReadClient flashRawRdClient = valFlashCtrl.flashRawRdClient;
    interface TagClient tagClient = valFlashCtrl.tagClient;

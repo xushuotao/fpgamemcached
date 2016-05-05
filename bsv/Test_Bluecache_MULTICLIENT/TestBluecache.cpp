@@ -78,6 +78,8 @@ void *get_request(void *ptr){
         }
       }
     }
+    
+    if (val) delete val;
     //if ( !successArray[i] ) fails++;
   }
 }
@@ -90,6 +92,14 @@ extern int flush_type_req_0;
 extern int flush_type_req_1;
 extern int flush_type_req_2;
 extern int flush_type_req_3;
+
+
+extern timespec* start_wait;
+extern timespec* hardware;
+extern timespec* software;
+
+extern double diff_0;
+extern double diff_1;
 
 
 int main(int argc, const char **argv){
@@ -109,6 +119,10 @@ int main(int argc, const char **argv){
   keyArray = new char**[threadcount];
   valArray = new char**[threadcount];
   successArray = new bool*[threadcount];
+
+  start_wait = new timespec[threadcount];
+  hardware = new timespec[threadcount];
+  software = new timespec[threadcount];
 
   clients = new BluecacheClient[threadcount];
   pthread_t* set_threads = new pthread_t[threadcount];
@@ -154,11 +168,13 @@ int main(int argc, const char **argv){
   fprintf(stderr, "Main:: Get Test Successful, num_resps = %d\n", num_Gets*threadcount);
   fprintf(stderr, "Main:: Get Test Successful, %f MRPS\n", (num_Gets*threadcount)/(timespec_diff_sec(start, now)*1000000));
 
-  fprintf(stderr, "Main:: %d(%d) %d(%d) %d(%d), %d, (%d)", 
+  fprintf(stderr, "Main:: %d(%d) %d(%d) %d(%d), %d, (%d)\n", 
 		  flush_type_0, flush_type_req_0,
 		  flush_type_1, flush_type_req_1,
 		  flush_type_2, flush_type_req_2,
 		  flush_type_x,
 		  flush_type_req_3
 		  );
+
+  fprintf(stderr, "Main:: %lf us , %lf us\n", diff_0, diff_1);
 }
